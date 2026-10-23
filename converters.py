@@ -777,13 +777,13 @@ def _bf_people(remark, conv):
 
 
 def _group_key(name):
-    """'진양그룹-Noah' → '진양그룹', 그 밖에는 이름 그대로"""
-    name = (name or "").strip()
-    return name.split("-")[0].strip() if "-" in name else name
+    """고객명이 완전히 같은 객실끼리만 단체로 본다.
+    '진양그룹-Noah'처럼 단체명 옆에 개인 이름이 있으면 각자 한 줄 (사용자 지시 2026-10-23)"""
+    return " ".join((name or "").split())
 
 
 def _group_breakfast(records, conv):
-    """같은 단체(고객명 또는 '단체명-이름'의 단체명이 같은 객실이 group_min_rooms개 이상)를 한 줄로 합친다.
+    """같은 단체(고객명이 똑같은 객실이 group_min_rooms개 이상)를 한 줄로 합친다.
     반환: (개별 객실 + 단체 줄, [(단체명, 객실 수, 인원 합)])"""
     min_rooms = conv.get("group_min_rooms", 2)
     by_key = {}

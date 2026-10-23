@@ -140,11 +140,13 @@ def test_breakfast(cfg, tmp_path):
     res = cv.convert_file("breakfast", src, str(tmp_path / "out"), BDATE, cfg)
     ws, v = _values(res["output"])
     rows = [r for r in v[2:] if r[0] and r[0].isdigit()]
-    assert [(r[0], r[2]) for r in rows] == [("0412", 2), ("0503", 2)]  # 룸온리 제외, 인원 = N인 또는 성인+소인
-    # 같은 단체는 맨 아래 한 줄 (객실 수·인원 합), 301~713 밖(1287)은 제외
+    # 룸온리 제외, 인원 = N인 또는 성인+소인. '단체명-이름'처럼 이름이 있으면 각자 한 줄
+    assert [(r[0], r[1], r[2]) for r in rows] == [("0412", "가상손님G", 2), ("0503", "가상손님E", 2),
+                                                 ("0703", "가상그룹-Kim", 1), ("0704", "가상그룹-Lee", 2)]
+    # 고객명이 똑같은 단체는 맨 아래 한 줄 (객실 수·인원 합), 301~713 밖(1287)은 제외
     groups = [r[1:3] for r in v[2:] if r[0] == "단체"]
-    assert groups == [["가상악단 (3실)", 3], ["가상그룹 (2실)", 3]]
-    assert [r[0] for r in v[2:6]] == ["0412", "0503", "단체", "단체"]
+    assert groups == [["가상악단 (3실)", 3]]
+    assert [r[0] for r in v[2:7]] == ["0412", "0503", "0703", "0704", "단체"]
     assert not any(r[0] == "1287" for r in v)
     assert ws["B3"].font.name == "맑은 고딕" and ws["B3"].font.sz == 18
 
