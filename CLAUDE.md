@@ -22,23 +22,23 @@
 ## 2. 현재 상태 (2026-10-23 기준)
 | 항목 | 상태 |
 |---|---|
-| 변환 로직 4종 (`converters.py`) | 작성 완료. **가상 데이터로만 테스트**, 실제 ERP 파일로는 미검증 |
-| GUI (`app.py`) | 작성 완료. **tkinter 창은 실행 테스트 못 함**(샌드박스에 tkinter 없음), 문법 검사만 통과 |
-| exe 빌드 | 미실행. `build_exe.bat` / GitHub Actions 워크플로 작성만 됨 |
+| 변환 로직 4종 (`converters.py`) | 작성 완료. **가상 데이터로만 테스트**, 실제 ERP 파일로는 미검증. 수입일보 `누계` 순환 수식 버그 수정(2026-10-23) |
+| GUI (`app.py`) | **v1.2 새 디자인**(헤더 · 영업일자 ◀▶ · 서류 카드 2×2 · 상태 배지 · 결과 열기 · 작업 기록). 변환은 별도 스레드라 화면이 멈추지 않음. Windows 배율(DPI) 대응. 샌드박스에서 `python3.12`+`python3-tk`+Xvfb로 실행·스크린샷 확인, Windows 실화면은 미확인 |
+| exe 빌드 | `.github/workflows/build.yml` 작성: push마다 windows-latest에서 테스트 → PyInstaller → exe 5초 실행 확인 → Artifact `GeoseongClosingTool`(exe + config.json + templates + 사용법.txt) |
 | 폰트·글자 크기·행열 크기 | **템플릿 채우기 구현 완료**(`templates/*.xlsx`가 있으면 양식 서식 그대로). 양식 파일이 아직 없어 지금은 사진으로 추정한 `config.json`의 `font`/`width` 값 사용 |
-| 테스트 코드 (`tests/`) | 없음 (폴더만 있음) |
+| 테스트 코드 (`tests/`) | `tests/test_converters.py` 7개(4종 변환·정렬·합계·카드 현금영수증·일괄 판별·오류 메시지·템플릿 서식 유지), 모두 가상 데이터 |
 | 호텔 양식 파일 (`templates/`) | **아직 없음** — 사용자에게 빈 양식 4종 요청 중 (파일 이름·만드는 법은 `templates/README.md`) |
-| GitHub Actions 워크플로 | **저장소에 없음** (`.github/workflows/build.yml` 업로드 누락) → 작업 2에서 새로 작성 |
 
 ## 3. 폴더 구조
 ```
-app.py            GUI. 서류 버튼 4개 + 일괄 변환 + 로그창 + 결과 폴더 열기
+app.py            GUI. 서류 카드 4개 + 일괄 변환 + 작업 기록 + 결과 열기 (변환은 작업 스레드)
 converters.py     변환 로직 (GUI와 분리, 단독 테스트 가능)
 config.json       ERP 열 제목 별칭 / 호텔 양식 열 구성 / 제목·파일명 규칙 (코드 수정 없이 조정)
 requirements.txt  openpyxl, xlrd==2.0.1
 build_exe.bat     Windows 더블클릭 exe 빌드 (Python 필요)
 .github/workflows/build.yml   GitHub Actions exe 자동 빌드
-tests/            테스트 (작성 예정)
+tests/            pytest 테스트 (가상 데이터)
+docs/사용법.txt   근무자용 사용법 (exe 배포 폴더에 같이 들어감)
 templates/        호텔 양식 원본(개인정보 없는 빈 양식만 커밋)
 ```
 

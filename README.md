@@ -4,10 +4,10 @@
 
 > 개발은 Claude Code로 진행합니다. 작업 지침은 `CLAUDE.md`를 참고하세요.
 
-## 사용법 (근무자)
-1. `GeoseongClosingTool.exe` 더블클릭 (`config.json`은 같은 폴더에 둘 것)
-2. 영업일자 확인 (정오 이전에는 전날 날짜가 자동 입력됨) → 서류 버튼 → ERP 엑셀 선택
-3. 원본 파일이 있는 폴더의 `마감결과` 폴더에 저장됨 ("결과 폴더 열기" 버튼)
+## 사용법 (근무자) — 자세한 내용은 `docs/사용법.txt`
+1. `GeoseongClosingTool.exe` 더블클릭 (`config.json`, `templates` 폴더는 같은 폴더에 둘 것)
+2. 영업일자 확인 (정오 이전에는 전날 날짜가 자동 선택, ◀ ▶로 변경) → 서류 카드의 [파일 선택] → ERP 엑셀 선택
+3. 원본 파일이 있는 폴더의 `마감결과` 폴더에 저장됨 (카드의 "결과 열기" / "결과 폴더 열기")
 4. **노란 칸은 직접 확인·입력**: 수입일보의 선/후·숙박수, 카드 승인내역의 객실·현금영수증
 
 ## 서류별 변환 규칙
@@ -19,7 +19,7 @@
 
 ## exe 만들기
 - **방법 A (Windows PC)**: `build_exe.bat` 더블클릭 → `dist` 폴더의 exe + config.json을 호텔 PC로 복사
-- **방법 B (GitHub)**: 저장소에 올리고 Actions → "Build Windows EXE" 실행 → Artifacts 다운로드
+- **방법 B (GitHub, 권장)**: push하면 자동으로 테스트 → exe 빌드. Actions → "Build Windows EXE" → 맨 위 실행 → 아래 Artifacts의 `GeoseongClosingTool` 다운로드(압축 해제하면 exe + config.json + 사용법.txt)
 - 호텔 PC가 Windows 7이면 Python 3.8로 빌드
 
 ## 양식 조정 (코드 수정 없이 config.json만 편집)

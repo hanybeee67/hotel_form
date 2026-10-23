@@ -20,6 +20,7 @@ if errorlevel 1 (
 )
 copy /Y config.json dist\config.json >nul
 if exist templates xcopy /E /I /Y templates dist\templates >nul
+copy /Y docs\사용법.txt dist\ >nul
 echo.
 echo Build complete: dist\GeoseongClosingTool.exe
 echo Copy BOTH files in dist\ (exe + config.json) to the hotel PC.

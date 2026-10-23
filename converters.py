@@ -547,8 +547,13 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
     else:
         s = _new_sheet(sheet_name, title_text, out_cols, font_cfg, row_height)
     ws, hrow, colmap = s.ws, s.hrow, s.colmap
-    key = lambda c: c.get("field") or c.get("formula_of") or c["header"]
-    idx = {key(c): i for i, c in enumerate(out_cols)}
+    # 열 찾기: 데이터 열은 field로, 모든 열은 header로도 찾는다
+    # (누계처럼 formula_of만 있는 열이 원래 열(sales)을 덮어쓰면 자기 자신을 가리키는 순환 수식이 된다)
+    idx = {}
+    for i, c in enumerate(out_cols):
+        if c.get("field"):
+            idx.setdefault(c["field"], i)
+        idx.setdefault(c["header"], i)
     printable = sorted(colmap[i] for i, c in enumerate(out_cols) if c.get("print", True))
     letter = lambda i: get_column_letter(colmap[i])
 
