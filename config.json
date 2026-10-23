@@ -131,8 +131,8 @@
       "sheet_title": "조 식 명 단({md})",
       "file_pattern": "조식명단 {date}",
       "template": "templates/조식명단.xlsx",
-      "font": {"name": "HY중고딕", "title": 12, "title_bold": true, "header": 9, "header_bold": false, "body": 9,
-               "title_height": 34, "header_height": 26, "row_height": 25, "header_fill": null, "sum_fill": null},
+      "font": {"name": "HY중고딕", "title": 15, "title_bold": true, "header": 11, "header_bold": false, "body": 11,
+               "title_height": 42, "header_height": 32, "row_height": 30, "header_fill": null, "sum_fill": null},
       "date_offset_days": 0,
       "source_fields": {
         "room":      ["객실번호", "객실#", "객실", "룸", "호실", "Room", "Rm"],
@@ -154,10 +154,10 @@
       "number_format": "0",
             "warn_missing": ["guest"],
       "output": [
-        {"header": "객실",   "field": "room",  "width": 6.5},
-        {"header": "고객명", "field": "guest", "width": 24},
-        {"header": "인원",   "field": "pax",   "width": 5.5},
-        {"header": "Sign",   "field": null,    "width": 10, "fill": false, "aliases": ["서명"]}
+        {"header": "객실",   "field": "room",  "width": 8},
+        {"header": "고객명", "field": "guest", "width": 29},
+        {"header": "인원",   "field": "pax",   "width": 7},
+        {"header": "Sign",   "field": null,    "width": 12, "fill": false, "aliases": ["서명"]}
       ],
       "sum": ["pax"]
     }
