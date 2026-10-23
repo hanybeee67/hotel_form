@@ -1,0 +1,154 @@
+{
+  "version": "1.1",
+  "business_day_rollover_hour": 12,
+  "mask_card_number": true,
+  "converters": {
+    "income": {
+      "title": "수입일보",
+      "keywords": ["수입일보", "수입"],
+      "signature": ["sales", "gross"],
+      "sheet_title": "수 입 일 보 ({md})",
+      "file_pattern": "수입일보 {date}",
+      "source_fields": {
+        "room":      ["객실#", "객실", "객실번호", "룸", "룸번호", "호실", "Room", "Rm"],
+        "guest":     ["투숙객명", "투숙객", "고객명", "성명", "Guest", "Guest Name"],
+        "company":   ["거래처", "거래처명", "회사", "회사명", "Company"],
+        "arrival":   ["도착일", "입실일", "체크인", "Arrival", "Arr"],
+        "departure": ["출발일", "퇴실일", "체크아웃", "Departure", "Dep"],
+        "sales":     ["NET", "공급가액", "공급가"],
+        "gross":     ["매출", "매출액"]
+      },
+      "fallback": {"sales": "gross"},
+      "types": {"arrival": "date", "departure": "date", "sales": "number", "gross": "number"},
+      "required": ["room", "sales"],
+      "require_room": true,
+      "room_format": "pad4",
+      "sort_by_room": true,
+      "check_total": true,
+      "number_format": "#,##0",
+      "warn_missing": ["guest", "company", "arrival", "departure"],
+      "output": [
+        {"header": "객실",     "field": "room",      "width": 9},
+        {"header": "투숙객명", "field": "guest",     "width": 30},
+        {"header": "거래처",   "field": "company",   "width": 16},
+        {"header": "도착일",   "field": "arrival",   "width": 13},
+        {"header": "출발일",   "field": "departure", "width": 13},
+        {"header": "선/후",    "field": null,        "width": 8},
+        {"header": "숙박수",   "field": null,        "width": 8},
+        {"header": "매출",     "field": "sales",     "width": 13},
+        {"header": "누계",     "formula_of": "sales", "width": 13}
+      ],
+      "sum": ["sales", "누계"]
+    },
+
+    "card": {
+      "title": "카드승인내역",
+      "keywords": ["카드", "승인", "현금영수증"],
+      "signature": ["acct", "card_no", "approval_no"],
+      "sheet_title": "카드 승인내역 ({md})",
+      "file_pattern": "카드 승인내역 {date}",
+      "source_fields": {
+        "acct":        ["Acct#[객실]", "Acct#", "Acct"],
+        "room":        ["객실", "객실번호", "룸", "룸번호", "호실", "Room"],
+        "card_no":     ["카드번호", "Card No", "Card Number"],
+        "biz_no":      ["사업자번호", "사업자등록번호", "Business No"],
+        "acquirer":    ["매입사", "매입사명"],
+        "merchant_no": ["가맹점번호", "가맹점", "Merchant No"],
+        "kind":        ["구분", "거래구분"],
+        "approval_no": ["승인번호", "Approval No"],
+        "amount":      ["승인금액", "결제금액"],
+        "response":    ["응답", "응답결과"]
+      },
+      "types": {"amount": "number"},
+      "required": ["amount"],
+      "room_format": "strip",
+      "include": {"response": ["성공"]},
+      "cash_keywords": ["현금"],
+      "cash_footer": true,
+      "number_format": "0",
+      "warn_missing": ["card_no", "biz_no", "acquirer", "merchant_no", "kind", "approval_no"],
+      "output": [
+        {"header": "객실",       "field": "room",        "width": 8},
+        {"header": "카드번호",   "field": "card_no",     "width": 24},
+        {"header": "사업자번호", "field": "biz_no",      "width": 15},
+        {"header": "매입사",     "field": "acquirer",    "width": 11},
+        {"header": "가맹점번호", "field": "merchant_no", "width": 15},
+        {"header": "구분",       "field": "kind",        "width": 11},
+        {"header": "승인번호",   "field": "approval_no", "width": 13},
+        {"header": "승인금액",   "field": "amount",      "width": 13},
+        {"header": "Acct#(객실확인용·인쇄안됨)", "field": "acct", "width": 26, "print": false}
+      ],
+      "sum": ["amount"]
+    },
+
+    "credit": {
+      "title": "대외후불리스트",
+      "keywords": ["후불", "대외"],
+      "signature": ["deposit_type"],
+      "sheet_title": "대외후불리스트({md})",
+      "file_pattern": "{m}월{d}일 대외후불리스트",
+      "source_fields": {
+        "room":         ["객실번호", "객실#", "객실", "룸", "호실", "Room"],
+        "guest":        ["고객명", "투숙객명", "투숙객", "성명", "Guest"],
+        "arrival":      ["도착일", "입실일", "체크인", "Arrival"],
+        "departure":    ["출발일", "퇴실일", "체크아웃", "Departure"],
+        "company":      ["거래처", "거래처명", "회사", "후불처", "Company"],
+        "amount":       ["입금액", "금액", "후불금액", "청구금액", "Amount"],
+        "deposit_type": ["입금종류", "입금구분"]
+      },
+      "types": {"arrival": "date", "departure": "date", "amount": "number"},
+      "required": ["room", "amount"],
+      "require_room": true,
+      "room_format": "pad4",
+      "sort_by_room": true,
+      "check_total": true,
+      "number_format": "0",
+      "warn_missing": ["guest", "arrival", "departure", "company"],
+      "output": [
+        {"header": "객실",   "field": "room",      "width": 10},
+        {"header": "고객명", "field": "guest",     "width": 16},
+        {"header": "도착일", "field": "arrival",   "width": 14},
+        {"header": "출발일", "field": "departure", "width": 14},
+        {"header": "거래처", "field": "company",   "width": 16},
+        {"header": "금액",   "field": "amount",    "width": 14}
+      ],
+      "sum": ["amount"]
+    },
+
+    "breakfast": {
+      "title": "조식명단",
+      "keywords": ["조식", "inhouse", "in house", "in_house", "morning"],
+      "signature": ["adults", "children"],
+      "sheet_title": "조 식 명 단({md})",
+      "file_pattern": "조식명단 {date}",
+      "date_offset_days": 0,
+      "source_fields": {
+        "room":      ["객실번호", "객실#", "객실", "룸", "호실", "Room", "Rm"],
+        "guest":     ["고객명", "투숙객명", "투숙객", "성명", "Guest", "Guest Name"],
+        "adults":    ["인원수[성인]", "성인", "Adult", "Adults"],
+        "children":  ["인원수[소인]", "소인", "아동", "Child", "Children"],
+        "pax":       ["인원", "Pax"],
+        "breakfast": ["조식", "조식여부", "조식포함", "B/F", "BF", "Breakfast"],
+        "remark":    ["비고", "메모", "Remark", "Remarks", "Memo"]
+      },
+      "types": {"adults": "number", "children": "number", "pax": "number"},
+      "required": ["room"],
+      "require_room": true,
+      "room_format": "pad4",
+      "sort_by_room": true,
+      "bf_include_regex": "조식|조포|b/?f|breakfast",
+      "bf_exclude_regex": "룸\\s*온[리니]|room\\s*only|^\\s*ro\\s*$",
+      "no_breakfast_values": ["", "0", "n", "no", "x", "-", "없음", "불포함", "제외", "false", "ro"],
+      "number_format": "0",
+      "row_height": 34,
+      "warn_missing": ["guest"],
+      "output": [
+        {"header": "객실",   "field": "room",  "width": 10},
+        {"header": "고객명", "field": "guest", "width": 38},
+        {"header": "인원",   "field": "pax",   "width": 9},
+        {"header": "Sign",   "field": null,    "width": 18, "fill": false}
+      ],
+      "sum": ["pax"]
+    }
+  }
+}

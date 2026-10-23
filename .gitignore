@@ -1,0 +1,24 @@
+# 개인정보가 담긴 실제 데이터는 절대 커밋하지 않기
+*.xls
+*.xlsx
+*.xlsm
+*.csv
+*.jpg
+*.jpeg
+*.png
+마감결과/
+sample_data/
+real_data/
+
+# 단, 호텔 양식 템플릿은 개인정보가 없는 빈 양식만 templates/ 에 두고 커밋
+!templates/*.xlsx
+
+# 파이썬/빌드 산출물
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+.venv/
+venv/
+.pytest_cache/
