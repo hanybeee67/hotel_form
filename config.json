@@ -10,8 +10,8 @@
       "sheet_title": "수 입 일 보 ({md})",
       "file_pattern": "수입일보 {date}",
       "template": "templates/수입일보.xlsx",
-      "font": {"name": "굴림", "title": 12, "title_bold": false, "header": 9, "header_bold": false, "body": 9,
-               "title_height": 24, "header_height": 18, "row_height": 16, "header_fill": null, "sum_fill": null},
+      "font": {"name": "굴림", "title": 28, "title_bold": true, "header": 18, "header_bold": true, "body": 18, "body_bold": true,
+               "title_height": 57, "header_height": 39, "row_height": 39, "header_fill": null, "sum_fill": null},
       "source_fields": {
         "room":      ["객실#", "객실", "객실번호", "룸", "룸번호", "호실", "Room", "Rm"],
         "guest":     ["투숙객명", "투숙객", "고객명", "성명", "Guest", "Guest Name"],
@@ -31,15 +31,15 @@
       "number_format": "#,##0",
       "warn_missing": ["guest", "company", "arrival", "departure"],
       "output": [
-        {"header": "객실",     "field": "room",      "width": 5},
-        {"header": "투숙객명", "field": "guest",     "width": 17},
-        {"header": "거래처",   "field": "company",   "width": 11},
-        {"header": "도착일",   "field": "arrival",   "width": 9.5},
-        {"header": "출발일",   "field": "departure", "width": 9.5},
-        {"header": "선/후",    "field": null,        "width": 5.5, "choices": ["선", "후"]},
-        {"header": "숙박수",   "field": null,        "width": 5.5, "input": "int"},
-        {"header": "매출",     "field": "sales",     "width": 8.5},
-        {"header": "누계",     "formula_of": "sales", "width": 8.5}
+        {"header": "객실",     "field": "room",      "width": 13.83},
+        {"header": "투숙객명", "field": "guest",     "width": 47.66},
+        {"header": "거래처",   "field": "company",   "width": 31.83},
+        {"header": "도착일",   "field": "arrival",   "width": 24.83},
+        {"header": "출발일",   "field": "departure", "width": 24.83},
+        {"header": "선/후",    "field": null,        "width": 16.83, "choices": ["선", "후"]},
+        {"header": "숙박수",   "field": null,        "width": 13.83, "input": "int"},
+        {"header": "매출",     "field": "sales",     "width": 24.83},
+        {"header": "누계",     "formula_of": "sales", "width": 24.83}
       ],
       "sum": ["sales", "누계"]
     },
@@ -51,8 +51,8 @@
       "sheet_title": "카드 승인내역 ({md})",
       "file_pattern": "카드 승인내역 {date}",
       "template": "templates/카드승인내역.xlsx",
-      "font": {"name": "굴림", "title": 12, "title_bold": false, "header": 9, "header_bold": true, "body": 9,
-               "title_height": 24, "header_height": 18, "row_height": 15, "header_fill": null, "sum_fill": null},
+      "font": {"name": "굴림", "title": 26, "title_bold": true, "header": 16, "header_bold": true, "body": 16, "body_bold": true,
+               "title_height": 50.1, "header_height": 36.95, "row_height": 36.95, "header_fill": null, "sum_fill": null},
       "source_fields": {
         "acct":        ["Acct#[객실]", "Acct#", "Acct"],
         "room":        ["객실", "객실번호", "룸", "룸번호", "호실", "Room"],
@@ -74,14 +74,14 @@
       "number_format": "0",
       "warn_missing": ["card_no", "biz_no", "acquirer", "merchant_no", "kind", "approval_no"],
       "output": [
-        {"header": "객실",       "field": "room",        "width": 8},
-        {"header": "카드번호",   "field": "card_no",     "width": 24},
-        {"header": "사업자번호", "field": "biz_no",      "width": 15},
-        {"header": "매입사",     "field": "acquirer",    "width": 11},
-        {"header": "가맹점번호", "field": "merchant_no", "width": 15},
-        {"header": "구분",       "field": "kind",        "width": 11},
-        {"header": "승인번호",   "field": "approval_no", "width": 13},
-        {"header": "승인금액",   "field": "amount",      "width": 13, "aliases": ["금액"]},
+        {"header": "객실",       "field": "room",        "width": 20.66, "fill_if_empty": true},
+        {"header": "카드번호",   "field": "card_no",     "width": 40.83},
+        {"header": "사업자번호", "field": "biz_no",      "width": 24.0},
+        {"header": "매입사",     "field": "acquirer",    "width": 16.33},
+        {"header": "가맹점번호", "field": "merchant_no", "width": 24.16},
+        {"header": "구분",       "field": "kind",        "width": 18.83},
+        {"header": "승인번호",   "field": "approval_no", "width": 18.5},
+        {"header": "승인금액",   "field": "amount",      "width": 19.66, "aliases": ["금액"]},
         {"header": "Acct#(객실확인용·인쇄안됨)", "field": "acct", "width": 26, "print": false}
       ],
       "sum": ["amount"]
@@ -94,8 +94,8 @@
       "sheet_title": "대외후불리스트({md})",
       "file_pattern": "{m}월{d}일 대외후불리스트",
       "template": "templates/대외후불리스트.xlsx",
-      "font": {"name": "굴림", "title": 14, "title_bold": false, "header": 9, "header_bold": false, "body": 9,
-               "title_height": 30, "header_height": 20, "row_height": 20, "header_fill": null, "sum_fill": null},
+      "font": {"name": "굴림", "title": 28, "title_bold": true, "header": 16, "header_bold": true, "body": 16, "body_bold": true,
+               "title_height": 60, "header_height": 39.95, "row_height": 39.95, "header_fill": null, "sum_fill": null},
       "source_fields": {
         "room":         ["객실번호", "객실#", "객실", "룸", "호실", "Room"],
         "guest":        ["고객명", "투숙객명", "투숙객", "성명", "Guest"],
@@ -114,12 +114,12 @@
       "number_format": "0",
       "warn_missing": ["guest", "arrival", "departure", "company"],
       "output": [
-        {"header": "객실",   "field": "room",      "width": 9.5},
-        {"header": "고객명", "field": "guest",     "width": 12.5},
-        {"header": "도착일", "field": "arrival",   "width": 12.5},
-        {"header": "출발일", "field": "departure", "width": 13},
-        {"header": "거래처", "field": "company",   "width": 10.5},
-        {"header": "금액",   "field": "amount",    "width": 14, "aliases": ["입금액"]}
+        {"header": "객실",   "field": "room",      "width": 23.5},
+        {"header": "고객명", "field": "guest",     "width": 30.83},
+        {"header": "도착일", "field": "arrival",   "width": 31.0},
+        {"header": "출발일", "field": "departure", "width": 31.5},
+        {"header": "거래처", "field": "company",   "width": 26.0},
+        {"header": "금액",   "field": "amount",    "width": 34.16, "aliases": ["입금액"]}
       ],
       "sum": ["amount"]
     },
@@ -131,8 +131,8 @@
       "sheet_title": "조 식 명 단({md})",
       "file_pattern": "조식명단 {date}",
       "template": "templates/조식명단.xlsx",
-      "font": {"name": "HY중고딕", "title": 15, "title_bold": true, "header": 11, "header_bold": false, "body": 11,
-               "title_height": 42, "header_height": 32, "row_height": 30, "header_fill": null, "sum_fill": null},
+      "font": {"name": "맑은 고딕", "title": 26, "title_bold": true, "header": 18, "header_bold": true, "body": 18, "body_bold": true,
+               "title_height": 69.95, "header_height": 54.95, "row_height": 54.95, "header_fill": null, "sum_fill": null},
       "date_offset_days": 0,
       "source_fields": {
         "room":      ["객실번호", "객실#", "객실", "룸", "호실", "Room", "Rm"],
@@ -154,12 +154,11 @@
       "number_format": "0",
             "warn_missing": ["guest"],
       "output": [
-        {"header": "객실",   "field": "room",  "width": 8},
-        {"header": "고객명", "field": "guest", "width": 29},
-        {"header": "인원",   "field": "pax",   "width": 7},
-        {"header": "Sign",   "field": null,    "width": 12, "fill": false, "aliases": ["서명"]}
-      ],
-      "sum": ["pax"]
+        {"header": "객실",   "field": "room",  "width": 13.625},
+        {"header": "고객명", "field": "guest", "width": 47.75},
+        {"header": "인원",   "field": "pax",   "width": 12.0},
+        {"header": "Sign",   "field": null,    "width": 21.0, "fill": false, "aliases": ["서명"]}
+      ]
     }
   }
 }

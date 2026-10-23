@@ -87,7 +87,7 @@ def test_income(cfg, tmp_path):
     dvs = {str(dv.sqref): dv for dv in ws.data_validations.dataValidation}
     assert dvs["F3:F4"].formula1 == '"선,후"' and dvs["G3:G4"].type == "whole"  # 직접 입력 칸 도움
     assert ws.page_setup.blackAndWhite  # 노란 칸은 인쇄되지 않게
-    assert ws["B3"].font.name == "굴림"
+    assert ws["B3"].font.name == "굴림" and ws["B3"].font.sz == 18 and ws["A1"].font.sz == 28
     assert os.path.basename(res["output"]) == "수입일보 2026-10-22.xlsx"
 
 
@@ -100,6 +100,8 @@ def test_card(cfg, tmp_path):
     assert v[2][3] == "가상카드"  # 발급사가 아니라 매입사
     assert v[3][5] == "현금영수증" and v[3][7] == 11000
     assert v[4][6] == "계" and v[4][7] == "=SUM(H3:H3)+H4"
+    ws = load_workbook(res["output"]).active
+    assert ws["A3"].fill.fgColor.rgb.endswith("FFF2B3")  # 객실은 Acct#를 보고 직접 입력하는 노란 칸
 
 
 def test_credit(cfg, tmp_path):
@@ -119,7 +121,7 @@ def test_breakfast(cfg, tmp_path):
     ws, v = _values(res["output"])
     rows = [r for r in v[2:] if r[0] and r[0].isdigit()]
     assert [(r[0], r[2]) for r in rows] == [("0412", 2), ("0503", 2)]  # 룸온리 제외, 인원 = N인 또는 성인+소인
-    assert ws["B3"].font.name == "HY중고딕"
+    assert ws["B3"].font.name == "맑은 고딕" and ws["B3"].font.sz == 18
 
 
 def test_wrong_file_message(cfg, tmp_path):
@@ -166,3 +168,30 @@ def test_template_keeps_hotel_format(cfg, tmp_path, no_templates):
     assert ws.column_dimensions["B"].width == 9.5
     assert ws.page_setup.orientation == "landscape"
     assert v[4][4] == "계" and v[4][5] == "=SUM(F3:F4)"
+
+
+@pytest.mark.parametrize("kind,data,title_size,body_size,font", [
+    ("income", INCOME, 28, 18, "굴림"),
+    ("card", CARD, 26, 16, "굴림"),
+    ("credit", CREDIT, 28, 16, "굴림"),
+    ("breakfast", BREAKFAST, 26, 18, "맑은 고딕"),
+])
+def test_repo_templates(cfg, tmp_path, monkeypatch, kind, data, title_size, body_size, font):
+    """저장소의 호텔 빈 양식(templates/)으로 변환하면 호텔 양식의 글꼴·크기·열 너비가 그대로 나온다."""
+    monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
+    tpl = load_workbook(os.path.join(ROOT, cfg["converters"][kind]["template"])).active
+    src = _xlsx(tmp_path / f"{kind}.xlsx", data)
+    res = cv.convert_file(kind, src, str(tmp_path / "out"), BDATE, cfg)
+    assert not any("양식 파일" in w for w in res["warnings"])
+    ws, v = _values(res["output"])
+    assert ws["A1"].font.name == font and ws["A1"].font.sz == title_size
+    assert ws["B3"].font.name == font and ws["B3"].font.sz == body_size and ws["B3"].font.b
+    for col in "ABCD":
+        assert ws.column_dimensions[col].width == tpl.column_dimensions[col].width
+    assert ws.row_dimensions[3].height == tpl.row_dimensions[3].height
+    assert "10/22" in v[0][0]
+    if kind == "breakfast":
+        firsts = [r[0] for r in v]
+        assert "외부식사" in firsts and any(str(x).startswith("조식 명단에") for x in firsts)
+        assert ws["E3"].border.right.style == "medium"  # 병합된 Sign 칸의 오른쪽 열도 테두리 유지
+        assert ws.auto_filter.ref.startswith("A2:E")

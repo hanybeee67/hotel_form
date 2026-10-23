@@ -376,6 +376,9 @@ class _Sheet:
         self.note_font = None
         self.from_template = False
         self.warnings = []
+        self.extra_cols = []    # 양식 표 안이지만 값을 채우지 않는 열(예: 병합된 Sign 칸의 오른쪽 열)
+        self.trailer = []       # 표 아래에 그대로 둘 행(예: 조식명단의 외부식사·안내 문구)
+        self.frame_last = 0     # 양식 표의 마지막 열
 
 
 def _fill(color):
@@ -523,6 +526,29 @@ def _template_sheet(path, sheet_name, title_text, out_cols):
     base_font = s.data_st[s.colmap[0]]["font"]
     s.note_font = Font(name=base_font.name, size=base_font.size, italic=True, color=_GREY)
 
+    # 양식 표의 너비(머리글 병합 포함) 안에서 값을 넣지 않는 열도 테두리·글꼴을 똑같이 그린다
+    s.frame_last = max(best[2].values())
+    for mr in ws.merged_cells.ranges:
+        if mr.min_row <= hrow <= mr.max_row and mr.min_col <= s.frame_last:
+            s.frame_last = max(s.frame_last, mr.max_col)
+    for c in range(1, s.frame_last + 1):
+        if c in s.colmap.values():
+            continue
+        s.extra_cols.append(c)
+        s.data_st[c] = _style_of(ws.cell(drow if use_data else hrow, c))
+        s.foot_st[c] = _style_of(ws.cell(foot_row, c)) if foot_row else s.data_st[c]
+
+    # 표 아래 안내 행: 합계 행 뒤(합계가 없으면 데이터 서식 행 뒤)에 있고, 첫 칸이 객실번호가 아닌 글자인 행
+    start = (foot_row or drow) + 1
+    for r in range(start, ws.max_row + 1):
+        first = clean_text(ws.cell(r, 1).value)
+        if not first or first.isdigit() or norm(first) in _TOTAL_WORDS:
+            continue
+        cells = [(c, ws.cell(r, c).value, _style_of(ws.cell(r, c))) for c in range(1, s.frame_last + 1)]
+        merges = [(mr.min_col, mr.max_col, mr.max_row - mr.min_row) for mr in ws.merged_cells.ranges
+                  if mr.min_row == r]
+        s.trailer.append((cells, rd[r].height if r in rd else None, merges))
+
     # 머리글 아래(예시 행·빈 행·기존 합계 행)를 비운다
     for mr in list(ws.merged_cells.ranges):
         if mr.min_row > hrow:
@@ -577,15 +603,19 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
             val = rec.get(f) if f else None
             if val not in ("", None):
                 cell.value = val
-            if f is None and col.get("fill", True):
-                cell.fill = copy(_BLANK_FILL)
+            if (f is None and col.get("fill", True)) or (col.get("fill_if_empty") and val in ("", None)):
+                cell.fill = copy(_BLANK_FILL)  # 근무자가 직접 입력할 칸
             if isinstance(val, (int, float)):
                 cell.number_format = fmt
+        for c in s.extra_cols:
+            _apply(ws.cell(r, c), s.data_st[c])
 
     first, last = hrow + 1, r
 
     # 직접 입력 칸: 선택 목록(예: 선/후)이나 숫자만 입력되게 도움말을 붙인다
-    manual = any(c.get("field") is None and c.get("fill", True) for c in out_cols) and records
+    manual = records and any((c.get("field") is None and c.get("fill", True)) or
+                             (c.get("fill_if_empty") and any(rec.get(c["field"]) in ("", None) for rec in records))
+                             for c in out_cols)
     for i, col in enumerate(out_cols):
         if col.get("field") is not None or not records:
             continue
@@ -606,7 +636,7 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
     def _foot_row(row):
         if s.foot_height:
             ws.row_dimensions[row].height = s.foot_height
-        for c in printable:
+        for c in printable + s.extra_cols:
             _apply(ws.cell(row, c), s.foot_st[c])
 
     def _foot(row, i, value, fill=None):
@@ -643,13 +673,27 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                 L = letter(i)
                 _foot(r, i, f"=SUM({L}{first}:{L}{last})")
 
+    for cells, height, merges in s.trailer:  # 양식의 표 아래 행(외부식사·안내 문구)을 그대로 붙인다
+        r += 1
+        for c, v, st in cells:
+            cell = ws.cell(r, c)
+            cell.value = v
+            _apply(cell, st)
+        if height:
+            ws.row_dimensions[r].height = height
+        for c0, c1, extra in merges:
+            ws.merge_cells(start_row=r, start_column=c0, end_row=r + extra, end_column=c1)
+
     if notes:
         r += 2
         for n in notes:
             ws.cell(r, printable[0], n).font = copy(s.note_font)
             r += 1
 
-    ws.print_area = f"A1:{get_column_letter(printable[-1])}{r}"
+    right = max(printable[-1], s.frame_last)
+    ws.print_area = f"A1:{get_column_letter(right)}{r}"
+    if ws.auto_filter.ref and records:
+        ws.auto_filter.ref = f"A{hrow}:{get_column_letter(right)}{last}"
     if manual or (cash is not None and cash.get("amount") is None):
         # 노란 칸은 화면에서만 보이는 안내 → 인쇄는 흑백으로 해서 호텔 양식처럼 나오게
         ws.page_setup.blackAndWhite = True
@@ -745,7 +789,7 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
                     rec["pax"] = (a or 0) + (c or 0)
             kept.append(rec)
         records = kept
-        notes.append(f"※ 전체 {before}객실 중 조식 대상 {len(records)}객실 (비고 문구 기준 자동 추출)")
+        warnings.append(f"전체 {before}객실 중 조식 대상 {len(records)}객실을 뽑았습니다 (비고 문구 기준).")
         no_pax = sum(1 for r in records if r.get("pax") is None)
         if no_pax:
             warnings.append(f"조식 대상 중 {no_pax}객실은 인원을 알 수 없어 빈칸입니다. 직접 입력해 주세요.")
