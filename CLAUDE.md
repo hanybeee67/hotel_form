@@ -24,7 +24,7 @@
 |---|---|
 | 변환 로직 4종 (`converters.py`) | 작성 완료. **가상 데이터로만 테스트**, 실제 ERP 파일로는 미검증. 수입일보 `누계` 순환 수식 버그 수정(2026-10-23) |
 | GUI (`app.py`) | **v1.2 새 디자인**(헤더 · 영업일자 ◀▶ · 서류 카드 2×2 · 상태 배지 · 결과 열기 · 작업 기록). 변환은 별도 스레드라 화면이 멈추지 않음. Windows 배율(DPI) 대응. 샌드박스에서 `python3.12`+`python3-tk`+Xvfb로 실행·스크린샷 확인, Windows 실화면은 미확인 |
-| exe 빌드 | `.github/workflows/build.yml` 작성: push마다 windows-latest에서 테스트 → PyInstaller → exe 5초 실행 확인 → Artifact `GeoseongClosingTool`(exe + config.json + templates + 사용법.txt) |
+| exe 빌드 | `.github/workflows/build.yml` 작성: push마다 windows-latest에서 테스트 → PyInstaller → exe 5초 실행 확인 → Artifact `GeoseongClosingTool`(exe + config.json + templates + 사용법.txt). **첫 빌드 성공(2026-10-23, run 39901388863, 약 12MB)**, 실행 확인 단계 통과. 호텔 PC 실사용 확인은 대기 |
 | 폰트·글자 크기·행열 크기 | **템플릿 채우기 구현 완료**(`templates/*.xlsx`가 있으면 양식 서식 그대로). 양식 파일이 아직 없어 지금은 사진으로 추정한 `config.json`의 `font`/`width` 값 사용 |
 | 테스트 코드 (`tests/`) | `tests/test_converters.py` 7개(4종 변환·정렬·합계·카드 현금영수증·일괄 판별·오류 메시지·템플릿 서식 유지), 모두 가상 데이터 |
 | 호텔 양식 파일 (`templates/`) | **아직 없음** — 사용자에게 빈 양식 4종 요청 중 (파일 이름·만드는 법은 `templates/README.md`) |
