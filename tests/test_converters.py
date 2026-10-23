@@ -227,6 +227,9 @@ def test_repo_templates(cfg, tmp_path, monkeypatch, kind, data, title_size, body
     import re
     import zipfile
     styles = zipfile.ZipFile(res["output"]).read("xl/styles.xml").decode()
+    # 호텔 PC 프로그램은 '테두리 적용' 표시가 없으면 선을 그리지 않는다 (빌드 16에서 확인됨) → 모든 셀 서식에 필수
+    xfs = re.findall(r"<xf [^>]*>", re.search(r"<cellXfs.*?</cellXfs>", styles, re.S).group(0))
+    assert xfs and all('applyBorder="1"' in x and 'applyFill="1"' in x and 'applyFont="1"' in x for x in xfs)
     fills = re.search(r"<fills.*?</fills>", styles, re.S).group(0)
     assert "FFFFFF\"" not in fills  # 흰색 채우기 없음 (노란 입력 칸만)
     last_row = max(r for r in range(1, ws.max_row + 1) if any(ws.cell(r, c).value is not None for c in range(1, 4)))

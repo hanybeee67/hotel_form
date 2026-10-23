@@ -764,9 +764,40 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
 
     try:
         _clean_copy(s.ws).save(path)
+        _mark_styles_applied(path)
     except PermissionError:
         raise ConversionError(f"결과 파일이 엑셀에서 열려 있습니다. 닫은 뒤 다시 시도해 주세요.\n{path}")
     return s.warnings
+
+
+def _mark_styles_applied(path):
+    """셀 서식마다 '테두리·채우기·글꼴·표시 형식을 적용함' 표시(applyBorder 등)를 붙인다.
+    openpyxl은 이 표시를 쓰지 않는데, 호텔 PC의 프로그램은 표시가 없으면 테두리를 그리지 않는다.
+    사용자 확인(2026-10-23): 이 표시를 넣은 빌드 12·13에서는 선이 보였고, 뺀 빌드 16에서는 안 보였음 → 반드시 유지."""
+    import re
+    import shutil
+    import tempfile
+    import zipfile
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx", dir=os.path.dirname(os.path.abspath(path)))
+    tmp.close()
+    with zipfile.ZipFile(path) as zin, zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "xl/styles.xml":
+                xml = data.decode("utf-8")
+                m = re.search(r"<cellXfs.*?</cellXfs>", xml, re.S)
+                if m:
+                    def flag(x):
+                        tag = x.group(0)
+                        for attr in ("applyNumberFormat", "applyFont", "applyFill", "applyBorder"):
+                            if attr not in tag:
+                                tag = tag.replace("<xf ", f'<xf {attr}="1" ', 1)
+                        return tag
+                    xfs = re.sub(r"<xf [^>]*>", flag, m.group(0))
+                    xml = xml[:m.start()] + xfs + xml[m.end():]
+                data = xml.encode("utf-8")
+            zout.writestr(item, data)
+    shutil.move(tmp.name, path)
 
 
 def _clean_copy(ws):
