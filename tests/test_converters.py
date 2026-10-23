@@ -258,3 +258,12 @@ def test_repo_templates(cfg, tmp_path, monkeypatch, kind, data, title_size, body
         assert total[2] == f"=SUM(C3:C{2 + n})"
         assert ws["E3"].border.right.style == "medium"  # 병합된 Sign 칸의 오른쪽 열도 테두리 유지
         assert ws.auto_filter.ref.startswith("A2:E")
+
+
+def test_output_folder_is_program_folder(cfg, tmp_path, monkeypatch):
+    """결과는 원본 옆이 아니라 프로그램(exe) 폴더 안의 '마감결과'에 모인다 (한희 폴더)."""
+    prog = tmp_path / "한희"
+    monkeypatch.setattr(cv, "app_dir", lambda: str(prog))
+    assert cv.default_out_dir(str(tmp_path / "다운로드" / "erp.xlsx"), cfg) == str(prog / "마감결과")
+    assert cv.default_out_dir(None, {**cfg, "output_dir": "결과모음"}) == str(prog / "결과모음")
+    assert cv.default_out_dir(None, {**cfg, "output_dir": str(tmp_path / "X")}) == str(tmp_path / "X")

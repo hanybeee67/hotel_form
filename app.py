@@ -321,7 +321,7 @@ class App(tk.Tk):
                         continue
                     self.jobs.put(("start", kind, path, None))
                 try:
-                    res = cv.convert_file(kind, path, cv.default_out_dir(path), bdate, self.cfg, unique=unique)
+                    res = cv.convert_file(kind, path, cv.default_out_dir(path, self.cfg), bdate, self.cfg, unique=unique)
                     self.jobs.put(("ok", kind, path, res))
                 except cv.ConversionError as e:
                     self.jobs.put(("err", kind, path, str(e)))
@@ -371,7 +371,7 @@ class App(tk.Tk):
         elif ev == "done":
             ok, fail = self._summary["ok"], self._summary["fail"]
             text = f"완료 — 성공 {ok}건" + (f", 실패 {fail}건" if fail else "") + \
-                   ("  ·  결과는 원본 폴더의 '마감결과' 폴더에 저장됩니다" if ok else "")
+                   ("  ·  결과는 프로그램 폴더 안의 '마감결과' 폴더에 저장됩니다" if ok else "")
             self._set_busy(False)
             self.status.configure(text=text, fg=C["err"] if fail and not ok else C["sub"])
 

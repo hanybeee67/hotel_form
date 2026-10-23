@@ -2,6 +2,7 @@
   "version": "1.2",
   "business_day_rollover_hour": 12,
   "valid_rooms": [301, 713],
+  "output_dir": "",
   "mask_card_number": true,
   "converters": {
     "income": {

@@ -1047,8 +1047,13 @@ def detect_type(path, cfg=None):
     return best_key
 
 
-def default_out_dir(src_path):
-    return os.path.join(os.path.dirname(os.path.abspath(src_path)), "마감결과")
+def default_out_dir(src_path=None, cfg=None):
+    """결과 폴더: 프로그램(exe)이 있는 폴더 안의 '마감결과' (사용자 지시 2026-10-23: 한희 폴더 안에 두기).
+    config.json의 output_dir에 다른 경로를 적으면 그곳을 쓴다 (상대 경로는 프로그램 폴더 기준)."""
+    custom = ((cfg or {}).get("output_dir") or "").strip()
+    if custom:
+        return custom if os.path.isabs(custom) else os.path.join(app_dir(), custom)
+    return os.path.join(app_dir(), "마감결과")
 
 
 def default_business_date(cfg=None, now=None):
