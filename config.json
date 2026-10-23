@@ -1,16 +1,17 @@
 {
   "version": "1.2",
   "business_day_rollover_hour": 12,
+  "valid_rooms": [301, 713],
   "mask_card_number": true,
   "converters": {
     "income": {
       "title": "수입일보",
       "keywords": ["수입일보", "수입"],
-      "signature": ["sales", "gross"],
+      "signature": ["sales_kind"],
       "sheet_title": "수 입 일 보 ({md})",
       "file_pattern": "수입일보 {date}",
       "template": "templates/수입일보.xlsx",
-      "font": {"name": "굴림", "title": 28, "title_bold": true, "header": 18, "header_bold": true, "body": 18, "body_bold": true,
+      "font": {"name": "굴림", "orientation": "landscape", "title": 28, "title_bold": true, "header": 18, "header_bold": true, "body": 18, "body_bold": true,
                "title_height": 57, "header_height": 39, "row_height": 39, "header_fill": null, "sum_fill": null},
       "source_fields": {
         "room":      ["객실#", "객실", "객실번호", "룸", "룸번호", "호실", "Room", "Rm"],
@@ -18,11 +19,10 @@
         "company":   ["거래처", "거래처명", "회사", "회사명", "Company"],
         "arrival":   ["도착일", "입실일", "체크인", "Arrival", "Arr"],
         "departure": ["출발일", "퇴실일", "체크아웃", "Departure", "Dep"],
-        "sales":     ["NET", "공급가액", "공급가"],
-        "gross":     ["매출", "매출액"]
+        "sales":     ["매출", "금액", "매출액", "합계금액"],
+        "sales_kind": ["매출구분"]
       },
-      "fallback": {"sales": "gross"},
-      "types": {"arrival": "date", "departure": "date", "sales": "number", "gross": "number"},
+      "types": {"arrival": "date", "departure": "date", "sales": "number"},
       "required": ["room", "sales"],
       "require_room": true,
       "room_format": "pad4",
@@ -51,7 +51,7 @@
       "sheet_title": "카드 승인내역 ({md})",
       "file_pattern": "카드 승인내역 {date}",
       "template": "templates/카드승인내역.xlsx",
-      "font": {"name": "굴림", "title": 26, "title_bold": true, "header": 16, "header_bold": true, "body": 16, "body_bold": true,
+      "font": {"name": "굴림", "orientation": "landscape", "title": 26, "title_bold": true, "header": 16, "header_bold": true, "body": 16, "body_bold": true,
                "title_height": 50.1, "header_height": 36.95, "row_height": 36.95, "header_fill": null, "sum_fill": null},
       "source_fields": {
         "acct":        ["Acct#[객실]", "Acct#", "Acct"],
@@ -94,7 +94,7 @@
       "sheet_title": "대외후불리스트({md})",
       "file_pattern": "{m}월{d}일 대외후불리스트",
       "template": "templates/대외후불리스트.xlsx",
-      "font": {"name": "굴림", "title": 28, "title_bold": true, "header": 16, "header_bold": true, "body": 16, "body_bold": true,
+      "font": {"name": "굴림", "orientation": "landscape", "title": 28, "title_bold": true, "header": 16, "header_bold": true, "body": 16, "body_bold": true,
                "title_height": 60, "header_height": 39.95, "row_height": 39.95, "header_fill": null, "sum_fill": null},
       "source_fields": {
         "room":         ["객실번호", "객실#", "객실", "룸", "호실", "Room"],
@@ -148,6 +148,9 @@
       "require_room": true,
       "room_format": "pad4",
       "sort_by_room": true,
+      "group_rows": true,
+      "group_min_rooms": 2,
+      "group_room_label": "단체",
       "bf_include_regex": "조식|조포|b/?f|breakfast",
       "bf_exclude_regex": "룸\\s*온[리니]|room\\s*only|^\\s*ro\\s*$",
       "no_breakfast_values": ["", "0", "n", "no", "x", "-", "없음", "불포함", "제외", "false", "ro"],

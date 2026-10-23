@@ -275,6 +275,8 @@ def _extract(conv, rows):
     include = {f: {norm(v) for v in vals} for f, vals in conv.get("include", {}).items()}
     exclude = {f: {norm(v) for v in vals} for f, vals in conv.get("exclude", {}).items()}
     records, src_total = [], None
+    lo, hi = conv.get("room_range") or (None, None)
+    out_of_range = []
     for row in rows[hidx + 1:]:
         if not any(clean_text(c) for c in row):
             continue
@@ -299,9 +301,17 @@ def _extract(conv, rows):
             rec["room"] = fmt_room(rec["room"], conv["room_format"])
         if conv.get("require_room") and not rec.get("room"):
             continue
+        if lo is not None and rec.get("room"):  # 호텔 객실(301~713)이 아닌 번호(가상객실·단체 계정 등)는 뺀다
+            n = int(rec["room"]) if rec["room"].isdigit() else None
+            if n is None or not lo <= n <= hi:
+                out_of_range.append(rec["room"])
+                continue
         if not any(v not in ("", None) for v in rec.values()):
             continue
         records.append(rec)
+    if out_of_range:
+        shown = ", ".join(sorted(set(out_of_range))[:8]) + (" …" if len(set(out_of_range)) > 8 else "")
+        warnings.append(f"객실 범위({lo}~{hi}) 밖의 번호 {len(out_of_range)}건은 뺐습니다: {shown}")
 
     # 원본에 합계 행이 있으면 우리가 계산한 합계와 대조
     if conv.get("check_total") and src_total is not None and conv.get("sum"):
@@ -419,7 +429,7 @@ def _new_sheet(sheet_name, title_text, out_cols, font_cfg, row_height):
     s.foot_height = s.data_height
     s.note_font = Font(name=f["name"], size=max(f["body"] - 1, 8), italic=True, color=_GREY)
     ws.freeze_panes = ws.cell(3, 1)
-    ws.page_setup.orientation = "portrait"
+    ws.page_setup.orientation = f.get("orientation", "portrait")
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
@@ -563,6 +573,35 @@ def _template_sheet(path, sheet_name, title_text, out_cols):
     return s
 
 
+_LINE = "000000"
+
+
+def _draw_grid(ws, r0, r1, c0, c1):
+    """표 전체에 검은 선을 긋는다: 안쪽은 가는 선, 바깥 테두리는 굵은 선 (어느 화면·인쇄에서도 보이게 색을 지정)."""
+    thin, thick = Side(style="thin", color=_LINE), Side(style="medium", color=_LINE)
+    for r in range(r0, r1 + 1):
+        for c in range(c0, c1 + 1):
+            ws.cell(r, c).border = Border(left=thick if c == c0 else thin, right=thick if c == c1 else thin,
+                                          top=thick if r in (r0, r0 + 1) else thin,
+                                          bottom=thick if r in (r1, r0) else thin)
+
+
+def _fit_a4(ws, hrow):
+    """A4 한 장 너비에 맞추고(세로는 필요한 만큼), 가운데 정렬·쪽마다 제목/머리글 반복·쪽 번호."""
+    ps = ws.page_setup
+    ps.paperSize = ws.PAPERSIZE_A4
+    ps.scale = None
+    ps.fitToWidth, ps.fitToHeight = 1, 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_options.horizontalCentered = True
+    m = ws.page_margins
+    m.left = m.right = 0.4
+    m.top = m.bottom = 0.5
+    m.header = m.footer = 0.3
+    ws.print_title_rows = f"1:{hrow}"
+    ws.oddFooter.center.text = "&P / &N"
+
+
 def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                    number_format="0", notes=None, cash=None, row_height=None,
                    template=None, font_cfg=None):
@@ -684,6 +723,8 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
         for c0, c1, extra in merges:
             ws.merge_cells(start_row=r, start_column=c0, end_row=r + extra, end_column=c1)
 
+    table_end = r  # 여기까지가 표(제목~합계·안내 행). 아래 메모는 표 밖
+
     if notes:
         r += 2
         for n in notes:
@@ -691,7 +732,9 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
             r += 1
 
     right = max(printable[-1], s.frame_last)
+    _draw_grid(ws, 1, table_end, 1, right)
     ws.print_area = f"A1:{get_column_letter(right)}{r}"
+    _fit_a4(ws, hrow)
     if ws.auto_filter.ref and records:
         ws.auto_filter.ref = f"A{hrow}:{get_column_letter(right)}{last}"
     if manual or (cash is not None and cash.get("amount") is None):
@@ -733,11 +776,44 @@ def _bf_people(remark, conv):
     return False, None
 
 
+def _group_key(name):
+    """'진양그룹-Noah' → '진양그룹', 그 밖에는 이름 그대로"""
+    name = (name or "").strip()
+    return name.split("-")[0].strip() if "-" in name else name
+
+
+def _group_breakfast(records, conv):
+    """같은 단체(고객명 또는 '단체명-이름'의 단체명이 같은 객실이 group_min_rooms개 이상)를 한 줄로 합친다.
+    반환: (개별 객실 + 단체 줄, [(단체명, 객실 수, 인원 합)])"""
+    min_rooms = conv.get("group_min_rooms", 2)
+    by_key = {}
+    for rec in records:
+        k = _group_key(rec.get("guest"))
+        if k:
+            by_key.setdefault(k, []).append(rec)
+    singles, rows, groups = [], [], []
+    for rec in records:
+        k = _group_key(rec.get("guest"))
+        if not k or len(by_key[k]) < min_rooms:
+            singles.append(rec)
+    for k, recs in by_key.items():
+        if len(recs) < min_rooms:
+            continue
+        paxes = [r.get("pax") for r in recs]
+        pax = sum(paxes) if all(p is not None for p in paxes) else None
+        rows.append({"room": conv.get("group_room_label", "단체"), "guest": f"{k} ({len(recs)}실)", "pax": pax,
+                     "_group": True})
+        groups.append((k, len(recs), pax))
+    return singles + rows, groups
+
+
 def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False):
     """kind: income | card | credit | breakfast.
     반환: {'output': 경로, 'count': 건수, 'warnings': [...], 'title': 이름}"""
     cfg = cfg or load_config()
-    conv = cfg["converters"][kind]
+    conv = dict(cfg["converters"][kind])
+    if "room_range" not in conv and cfg.get("valid_rooms"):
+        conv["room_range"] = cfg["valid_rooms"]
     bdate = _parse_date(business_date)
     rows = read_table(src_path)
     records, warnings, mapped = _extract(conv, rows)
@@ -745,7 +821,7 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
     cash = None
 
     if kind == "income":
-        warnings.insert(0, "매출 열은 ERP의 NET(공급가, 부가세 제외) 금액으로 채웠습니다. 호텔 양식 기준과 같은지 확인해 주세요.")
+        warnings.insert(0, "매출 열은 ERP의 '매출'(부가세 포함 금액)로 채웠습니다.")
         warnings.append("'선/후', '숙박수'는 노란 칸에 직접 입력하세요. '누계'는 우선 매출과 같은 값(수식)으로 채워져 있습니다.")
 
     if kind == "card":
@@ -790,6 +866,10 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
             kept.append(rec)
         records = kept
         warnings.append(f"전체 {before}객실 중 조식 대상 {len(records)}객실을 뽑았습니다 (비고 문구 기준).")
+        if conv.get("group_rows"):
+            records, groups = _group_breakfast(records, conv)
+            for name, n, pax in groups:
+                warnings.append(f"단체 '{name}' {n}객실은 맨 아래 한 줄로 합쳤습니다 (인원 {pax if pax is not None else '확인 필요'}).")
         no_pax = sum(1 for r in records if r.get("pax") is None)
         if no_pax:
             warnings.append(f"조식 대상 중 {no_pax}객실은 인원을 알 수 없어 빈칸입니다. 직접 입력해 주세요.")
@@ -797,8 +877,8 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
             warnings.append("원본에 '비고'(조식 표시) 열이 없어 조식 대상을 가려내지 못했습니다. 전체를 확인해 주세요.")
         warnings.append("비고에 '조식'/'조포'가 있는 객실만 뽑았습니다('룸온리'는 제외). 비고가 다른 표현이면 알려 주세요.")
 
-    if conv.get("sort_by_room"):
-        records.sort(key=_room_key)
+    if conv.get("sort_by_room"):  # 단체 줄은 항상 맨 아래
+        records.sort(key=lambda rec: (rec.get("_group", False), _room_key(rec)))
 
     if not records:
         raise ConversionError("변환할 데이터 행이 없습니다. 파일 내용이나 조건(조식 대상 등)을 확인해 주세요.")

@@ -50,6 +50,8 @@ INCOME = [
      9000, 0, 99000, 0],
     ["ROOM", "가상손님A", "2026-10-22", "2026-10-23", "F/T", "가상회사", "0302", "", 125000, 0, "", "", 1, 80000, 0,
      8000, 0, 88000, 0],
+    ["ROOM", "가상단체", "2026-10-22", "2026-10-23", "D/T", "가상회사", "1030", "", 0, 0, "", "", 1, 0, 0,
+     0, 0, 50000, 0],
 ]
 CARD = [
     ["영업일자", "순번", "빌번호[업장]", "Acct#[객실]", "구분", "카드번호", "할부기간", "부가세", "승인금액", "실정산금액",
@@ -71,6 +73,12 @@ BREAKFAST = [
     [1, "가", "", "2인 조식 포함", "가상손님E", "0503", 2, 0],
     [2, "나", "", "룸온리", "가상손님F", "0601", 1, 0],
     [3, "다", "", "조포", "가상손님G", "0412", 1, 1],
+    [4, "라", "", "1인 조포", "가상악단", "0601", 1, 0],
+    [5, "라", "", "1인 조포", "가상악단", "0602", 1, 0],
+    [6, "라", "", "1인 조포", "가상악단", "0702", 1, 0],
+    [7, "마", "", "1인 조포", "가상그룹-Kim", "0703", 1, 0],
+    [8, "마", "", "2인 조포", "가상그룹-Lee", "0704", 2, 0],
+    [9, "바", "", "조포", "가상단체계정", "1287", 1, 0],
 ]
 
 
@@ -80,7 +88,7 @@ def test_income(cfg, tmp_path):
     ws, v = _values(res["output"])
     assert v[0][0] == "수 입 일 보 (10/22)"
     assert [r[0] for r in v[2:4]] == ["0302", "0305"]  # 객실 순 정렬, 앞자리 0 유지
-    assert v[2][7] == 80000  # NET
+    assert v[2][7] == 88000  # 매출 = 부가세 포함 금액 (NET 아님)
     assert v[2][8] == "=H3"  # 누계 = 매출 (자기 자신을 가리키면 순환 참조)
     assert v[4][6] == "계" and v[4][7] == "=SUM(H3:H4)" and v[4][8] == "=SUM(I3:I4)"
     assert ws["F3"].fill.fgColor.rgb.endswith("FFF2B3")  # 선/후 노란 칸
@@ -89,6 +97,18 @@ def test_income(cfg, tmp_path):
     assert ws.page_setup.blackAndWhite  # 노란 칸은 인쇄되지 않게
     assert ws["B3"].font.name == "굴림" and ws["B3"].font.sz == 18 and ws["A1"].font.sz == 28
     assert os.path.basename(res["output"]) == "수입일보 2026-10-22.xlsx"
+    assert not any(r[0] == "1030" for r in v)  # 객실 범위(301~713) 밖 제외
+    assert any("범위" in w and "1030" in w for w in res["warnings"])
+    # 표 전체에 검은 선 (바깥 굵게, 안쪽 가늘게), A4 너비 맞춤
+    for ref in ("A2", "E3", "I5", "B4"):
+        b = ws[ref].border
+        assert all(getattr(b, s).style for s in ("left", "right", "top", "bottom")), ref
+        assert b.left.color.rgb.endswith("000000")
+    assert ws["A3"].border.left.style == "medium" and ws["I3"].border.right.style == "medium"
+    assert ws["E5"].border.bottom.style == "medium" and ws["E4"].border.bottom.style == "thin"
+    ps = ws.page_setup
+    assert int(ps.paperSize) == 9 and ps.orientation == "landscape" and ps.fitToWidth == 1 and ps.fitToHeight == 0
+    assert ws.print_options.horizontalCentered and ws.print_title_rows == "$1:$2"
 
 
 def test_card(cfg, tmp_path):
@@ -121,6 +141,11 @@ def test_breakfast(cfg, tmp_path):
     ws, v = _values(res["output"])
     rows = [r for r in v[2:] if r[0] and r[0].isdigit()]
     assert [(r[0], r[2]) for r in rows] == [("0412", 2), ("0503", 2)]  # 룸온리 제외, 인원 = N인 또는 성인+소인
+    # 같은 단체는 맨 아래 한 줄 (객실 수·인원 합), 301~713 밖(1287)은 제외
+    groups = [r[1:3] for r in v[2:] if r[0] == "단체"]
+    assert groups == [["가상악단 (3실)", 3], ["가상그룹 (2실)", 3]]
+    assert [r[0] for r in v[2:6]] == ["0412", "0503", "단체", "단체"]
+    assert not any(r[0] == "1287" for r in v)
     assert ws["B3"].font.name == "맑은 고딕" and ws["B3"].font.sz == 18
 
 
