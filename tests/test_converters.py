@@ -84,6 +84,9 @@ def test_income(cfg, tmp_path):
     assert v[2][8] == "=H3"  # 누계 = 매출 (자기 자신을 가리키면 순환 참조)
     assert v[4][6] == "계" and v[4][7] == "=SUM(H3:H4)" and v[4][8] == "=SUM(I3:I4)"
     assert ws["F3"].fill.fgColor.rgb.endswith("FFF2B3")  # 선/후 노란 칸
+    dvs = {str(dv.sqref): dv for dv in ws.data_validations.dataValidation}
+    assert dvs["F3:F4"].formula1 == '"선,후"' and dvs["G3:G4"].type == "whole"  # 직접 입력 칸 도움
+    assert ws.page_setup.blackAndWhite  # 노란 칸은 인쇄되지 않게
     assert ws["B3"].font.name == "굴림"
     assert os.path.basename(res["output"]) == "수입일보 2026-10-22.xlsx"
 

@@ -12,6 +12,7 @@ from html.parser import HTMLParser
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.datavalidation import DataValidation
 
 
 class ConversionError(Exception):
@@ -327,6 +328,7 @@ _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _BLANK_FILL = PatternFill("solid", fgColor="FFF2B3")  # 근무자가 직접 확인/입력할 칸
 _NO_FILL = PatternFill(fill_type=None)
 _CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
+_ONE_LINE = Alignment(horizontal="center", vertical="center", shrink_to_fit=True)  # 호텔 양식처럼 한 줄 (넘치면 글자 축소)
 _DEFAULT_FONT = {"name": "굴림", "title": 20, "header": 9, "body": 9}
 _GREY = "666666"
 
@@ -407,7 +409,7 @@ def _new_sheet(sheet_name, title_text, out_cols, font_cfg, row_height):
         cell.fill, cell.border, cell.alignment = copy(head_fill), _BORDER, _CENTER
         ws.column_dimensions[get_column_letter(c)].width = col.get("width", 12)
         s.data_st[c] = {"font": Font(name=f["name"], size=f["body"], bold=f.get("body_bold", False), color=color),
-                        "border": _BORDER, "fill": _NO_FILL, "alignment": _CENTER, "number_format": None}
+                        "border": _BORDER, "fill": _NO_FILL, "alignment": _ONE_LINE, "number_format": None}
         s.foot_st[c] = {"font": Font(name=f["name"], size=f["body"], bold=f.get("sum_bold", True)),
                         "border": _BORDER, "fill": sum_fill, "alignment": _CENTER, "number_format": None}
     s.data_height = row_height or f.get("row_height")
@@ -582,6 +584,25 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
 
     first, last = hrow + 1, r
 
+    # 직접 입력 칸: 선택 목록(예: 선/후)이나 숫자만 입력되게 도움말을 붙인다
+    manual = any(c.get("field") is None and c.get("fill", True) for c in out_cols) and records
+    for i, col in enumerate(out_cols):
+        if col.get("field") is not None or not records:
+            continue
+        rng = f"{letter(i)}{first}:{letter(i)}{last}"
+        if col.get("choices"):
+            dv = DataValidation(type="list", formula1='"' + ",".join(col["choices"]) + '"', allow_blank=True,
+                                showErrorMessage=True, errorTitle="입력 확인",
+                                error=f"{' / '.join(col['choices'])} 중에서 골라 주세요.")
+        elif col.get("input") == "int":
+            dv = DataValidation(type="whole", operator="greaterThanOrEqual", formula1="0", allow_blank=True,
+                                showErrorMessage=True, errorTitle="입력 확인", error="숫자만 입력해 주세요.")
+        else:
+            continue
+        dv.promptTitle, dv.prompt, dv.showInputMessage = col["header"], "직접 확인 후 입력하세요.", True
+        ws.add_data_validation(dv)
+        dv.add(rng)
+
     def _foot_row(row):
         if s.foot_height:
             ws.row_dimensions[row].height = s.foot_height
@@ -629,6 +650,9 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
             r += 1
 
     ws.print_area = f"A1:{get_column_letter(printable[-1])}{r}"
+    if manual or (cash is not None and cash.get("amount") is None):
+        # 노란 칸은 화면에서만 보이는 안내 → 인쇄는 흑백으로 해서 호텔 양식처럼 나오게
+        ws.page_setup.blackAndWhite = True
 
     try:
         s.wb.save(path)
