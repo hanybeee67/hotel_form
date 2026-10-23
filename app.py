@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import converters as cv
 
-VERSION = "v1.1"
+VERSION = "v1.2"
 SECTIONS = [
     ("income", "1. 수입일보 자동 변환", [
         "오아시스 ERP에서 추출한 엑셀 파일을 선택하여 호텔 양식으로 변환.",

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+from copy import copy
 from html.parser import HTMLParser
 
 from openpyxl import Workbook, load_workbook
@@ -323,118 +324,312 @@ def _is_breakfast(val, no_values):
 # ---------------------------------------------------------------- 엑셀 출력
 _THIN = Side(style="thin", color="000000")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
-_HEAD_FILL = PatternFill("solid", fgColor="E7EBF0")
-_SUM_FILL = PatternFill("solid", fgColor="F2F2F2")
 _BLANK_FILL = PatternFill("solid", fgColor="FFF2B3")  # 근무자가 직접 확인/입력할 칸
-_FONT = "굴림"
+_NO_FILL = PatternFill(fill_type=None)
 _CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
+_DEFAULT_FONT = {"name": "굴림", "title": 20, "header": 9, "body": 9}
+_GREY = "666666"
+
+
+def resolve_template(rel):
+    """양식 파일은 exe 옆의 templates/를 먼저 찾고, 없으면 exe 안에 포함된 것을 찾는다."""
+    if not rel:
+        return None
+    for base in (app_dir(), bundled_dir()):
+        p = os.path.join(base, rel)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def _style_of(cell):
+    return {"font": copy(cell.font), "border": copy(cell.border), "fill": copy(cell.fill),
+            "alignment": copy(cell.alignment), "number_format": cell.number_format}
+
+
+def _apply(cell, st, **over):
+    st = {**st, **over}
+    cell.font, cell.border, cell.fill = copy(st["font"]), copy(st["border"]), copy(st["fill"])
+    cell.alignment = copy(st["alignment"])
+    if st.get("number_format"):
+        cell.number_format = st["number_format"]
+
+
+def _has_style(cell):
+    b = cell.border
+    return any(getattr(b, s).style for s in ("left", "right", "top", "bottom")) or cell.fill.fill_type is not None
+
+
+class _Sheet:
+    """출력 시트와 서식 정보. 호텔 양식(템플릿)이 있으면 그 서식을, 없으면 config의 폰트를 쓴다."""
+
+    def __init__(self):
+        self.wb = self.ws = None
+        self.hrow = 0
+        self.colmap = {}        # out_cols 순번 → 시트 열 번호(1부터)
+        self.data_st = {}       # 시트 열 → 데이터 칸 서식
+        self.foot_st = {}       # 시트 열 → 합계 칸 서식
+        self.data_height = None
+        self.foot_height = None
+        self.note_font = None
+        self.from_template = False
+        self.warnings = []
+
+
+def _fill(color):
+    return PatternFill("solid", fgColor=color) if color else _NO_FILL
+
+
+def _new_sheet(sheet_name, title_text, out_cols, font_cfg, row_height):
+    """템플릿이 없을 때: config의 font 설정(폰트·크기·행 높이)으로 새 양식을 만든다."""
+    f = {**_DEFAULT_FONT, **(font_cfg or {})}
+    s = _Sheet()
+    s.wb = Workbook()
+    ws = s.ws = s.wb.active
+    ws.title = sheet_name[:31]
+    nprint = sum(1 for c in out_cols if c.get("print", True))
+
+    t = ws.cell(1, 1, title_text)
+    t.font = Font(name=f["name"], size=f["title"], bold=f.get("title_bold", True))
+    t.alignment = _CENTER
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=nprint)
+    ws.row_dimensions[1].height = f.get("title_height", 44)
+    s.hrow = 2
+    ws.row_dimensions[2].height = f.get("header_height", 28)
+    head_fill = _fill(f.get("header_fill", "E7EBF0"))
+    sum_fill = _fill(f.get("sum_fill", "F2F2F2"))
+    for i, col in enumerate(out_cols):
+        c = i + 1
+        s.colmap[i] = c
+        color = _GREY if not col.get("print", True) else "000000"
+        cell = ws.cell(2, c, col["header"])
+        cell.font = Font(name=f["name"], size=f["header"], bold=f.get("header_bold", True), color=color)
+        cell.fill, cell.border, cell.alignment = copy(head_fill), _BORDER, _CENTER
+        ws.column_dimensions[get_column_letter(c)].width = col.get("width", 12)
+        s.data_st[c] = {"font": Font(name=f["name"], size=f["body"], bold=f.get("body_bold", False), color=color),
+                        "border": _BORDER, "fill": _NO_FILL, "alignment": _CENTER, "number_format": None}
+        s.foot_st[c] = {"font": Font(name=f["name"], size=f["body"], bold=f.get("sum_bold", True)),
+                        "border": _BORDER, "fill": sum_fill, "alignment": _CENTER, "number_format": None}
+    s.data_height = row_height or f.get("row_height")
+    s.foot_height = s.data_height
+    s.note_font = Font(name=f["name"], size=max(f["body"] - 1, 8), italic=True, color=_GREY)
+    ws.freeze_panes = ws.cell(3, 1)
+    ws.page_setup.orientation = "portrait"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_options.horizontalCentered = True
+    ws.print_title_rows = "2:2"
+    return s
+
+
+def _template_sheet(path, sheet_name, title_text, out_cols):
+    """호텔 양식을 열어 머리글 행을 찾고, 그 아래 데이터·합계 행의 서식을 기억한 뒤 비운다.
+    폰트·열 너비·제목 병합·인쇄 설정은 양식 그대로 유지된다."""
+    try:
+        wb = load_workbook(path)
+    except Exception as e:
+        raise ConversionError(f"호텔 양식 파일을 열 수 없습니다: {os.path.basename(path)}\n({e})")
+    ws = wb.worksheets[0]
+    heads = {}  # 양식 머리글 → out_cols 순번 (header와 aliases 모두 인정)
+    for i, col in enumerate(out_cols):
+        for h in [col["header"]] + col.get("aliases", []):
+            heads.setdefault(norm(h), i)
+
+    best = (0, None, {})
+    for r in range(1, min(ws.max_row, 30) + 1):
+        m = {}
+        for c in range(1, ws.max_column + 1):
+            i = heads.get(norm(ws.cell(r, c).value))
+            if i is not None and i not in m:
+                m[i] = c
+        if len(m) > best[0]:
+            best = (len(m), r, m)
+    if best[0] < 2:
+        raise ConversionError(f"호텔 양식({os.path.basename(path)})에서 머리글 행(객실 등)을 찾지 못했습니다.\n"
+                              "양식의 열 제목이 config.json의 output 'header'와 같은지 확인해 주세요.")
+    s = _Sheet()
+    s.wb, s.ws, s.from_template = wb, ws, True
+    s.hrow, s.colmap = best[1], dict(best[2])
+    hrow = s.hrow
+
+    # 양식에 없는 열(예: 인쇄 안 되는 Acct# 참고 열)은 오른쪽 끝에 덧붙인다
+    nxt = max(max(s.colmap.values()), ws.max_column) + 1
+    for i, col in enumerate(out_cols):
+        if i in s.colmap:
+            continue
+        s.colmap[i] = nxt
+        src = ws.cell(hrow, max(best[2].values()))
+        cell = ws.cell(hrow, nxt, col["header"])
+        _apply(cell, _style_of(src))
+        cell.font = copy(src.font) if col.get("print", True) else Font(
+            name=src.font.name, size=src.font.size, bold=src.font.bold, color=_GREY)
+        ws.column_dimensions[get_column_letter(nxt)].width = col.get("width", 12)
+        if col.get("print", True):
+            s.warnings.append(f"호텔 양식에 '{col['header']}' 열이 없어 오른쪽 끝에 추가했습니다.")
+        nxt += 1
+
+    # 제목: 머리글 위쪽의 첫 글자 칸을 이번 날짜 제목으로 교체(서식은 그대로)
+    done = False
+    for r in range(1, hrow):
+        for c in range(1, ws.max_column + 1):
+            v = ws.cell(r, c).value
+            if isinstance(v, str) and v.strip():
+                ws.cell(r, c).value = title_text
+                done = True
+                break
+        if done:
+            break
+    if not done:
+        s.warnings.append("호텔 양식에서 제목 칸을 찾지 못해 제목을 넣지 않았습니다.")
+
+    # 데이터 행 서식: 머리글 바로 아래 행. 서식이 없으면 머리글 서식에서 굵게만 뺀다
+    drow = hrow + 1
+    use_data = drow <= ws.max_row and any(_has_style(ws.cell(drow, c)) for c in best[2].values())
+    foot_row = None
+    for r in range(hrow + 1, ws.max_row + 1):
+        if any(norm(ws.cell(r, c).value) in ("계", "합계", "총계") for c in range(1, ws.max_column + 1)):
+            foot_row = r
+            break
+    if foot_row == drow:
+        use_data = False
+    for i, c in s.colmap.items():
+        if use_data:
+            st = _style_of(ws.cell(drow, c))
+        else:
+            st = _style_of(ws.cell(hrow, c))
+            st["font"] = copy(st["font"])
+            st["font"].b = False
+            st["fill"] = _NO_FILL
+        if not out_cols[i].get("print", True):
+            fnt = copy(st["font"])
+            fnt.color = _GREY
+            st["font"] = fnt
+        s.data_st[c] = st
+        if foot_row:
+            s.foot_st[c] = _style_of(ws.cell(foot_row, c))
+        else:
+            fst = dict(st)
+            fnt = copy(st["font"])
+            fnt.b = True
+            fst["font"] = fnt
+            s.foot_st[c] = fst
+    rd = ws.row_dimensions
+    s.data_height = rd[drow].height if use_data and drow in rd else None
+    s.foot_height = rd[foot_row].height if foot_row and foot_row in rd else s.data_height
+    base_font = s.data_st[s.colmap[0]]["font"]
+    s.note_font = Font(name=base_font.name, size=base_font.size, italic=True, color=_GREY)
+
+    # 머리글 아래(예시 행·빈 행·기존 합계 행)를 비운다
+    for mr in list(ws.merged_cells.ranges):
+        if mr.min_row > hrow:
+            ws.unmerge_cells(str(mr))
+    if ws.max_row > hrow:
+        ws.delete_rows(hrow + 1, ws.max_row - hrow)
+    for k in [k for k in rd if k > hrow]:
+        del rd[k]
+    if not ws.print_title_rows:
+        ws.print_title_rows = f"{hrow}:{hrow}"
+    ws.title = sheet_name[:31]
+    return s
 
 
 def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
-                   number_format="0", notes=None, cash=None, row_height=None):
-    wb = Workbook()
-    ws = wb.active
-    ws.title = sheet_name[:31]
-    ncol = len(out_cols)
-    nprint = sum(1 for c in out_cols if c.get("print", True))
+                   number_format="0", notes=None, cash=None, row_height=None,
+                   template=None, font_cfg=None):
+    """template(호텔 양식 경로)가 있으면 양식을 열어 값만 채우고, 없으면 font_cfg로 새로 만든다.
+    반환: 경고 목록"""
+    if template:
+        s = _template_sheet(template, sheet_name, title_text, out_cols)
+        if row_height and s.data_height is None:
+            s.data_height = row_height
+    else:
+        s = _new_sheet(sheet_name, title_text, out_cols, font_cfg, row_height)
+    ws, hrow, colmap = s.ws, s.hrow, s.colmap
     key = lambda c: c.get("field") or c.get("formula_of") or c["header"]
     idx = {key(c): i for i, c in enumerate(out_cols)}
-
-    # 제목(행1) / 머리글(행2) / 데이터(행3~) - 호텔 기존 양식과 동일한 배치
-    t = ws.cell(1, 1, title_text)
-    t.font = Font(name=_FONT, size=20, bold=True)
-    t.alignment = _CENTER
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=nprint)
-    ws.row_dimensions[1].height = 44
-    hrow = 2
-    ws.row_dimensions[hrow].height = 28
-    for c, col in enumerate(out_cols, 1):
-        cell = ws.cell(hrow, c, col["header"])
-        cell.font = Font(name=_FONT, size=11, bold=True, color="666666" if not col.get("print", True) else "000000")
-        cell.fill = _HEAD_FILL
-        cell.border = _BORDER
-        cell.alignment = _CENTER
-        ws.column_dimensions[get_column_letter(c)].width = col.get("width", 12)
+    printable = sorted(colmap[i] for i, c in enumerate(out_cols) if c.get("print", True))
+    letter = lambda i: get_column_letter(colmap[i])
 
     r = hrow
     for rec in records:
         r += 1
-        if row_height:
-            ws.row_dimensions[r].height = row_height
-        for c, col in enumerate(out_cols, 1):
-            cell = ws.cell(r, c)
-            cell.border = _BORDER
-            cell.alignment = _CENTER
-            cell.font = Font(name=_FONT, size=10, color="666666" if not col.get("print", True) else "000000")
+        if s.data_height:
+            ws.row_dimensions[r].height = s.data_height
+        for i, col in enumerate(out_cols):
+            cell = ws.cell(r, colmap[i])
+            st = s.data_st[colmap[i]]
+            _apply(cell, st)
+            fmt = st["number_format"] if st["number_format"] not in (None, "General") else number_format
             if col.get("formula_of"):
-                L = get_column_letter(idx[col["formula_of"]] + 1)
-                cell.value = f"={L}{r}"
-                cell.number_format = number_format
+                cell.value = f"={letter(idx[col['formula_of']])}{r}"
+                cell.number_format = fmt
                 continue
             f = col.get("field")
             val = rec.get(f) if f else None
             if val not in ("", None):
                 cell.value = val
             if f is None and col.get("fill", True):
-                cell.fill = _BLANK_FILL
+                cell.fill = copy(_BLANK_FILL)
             if isinstance(val, (int, float)):
-                cell.number_format = number_format
+                cell.number_format = fmt
 
     first, last = hrow + 1, r
 
-    def _footer_cell(row, col_i, value=None, fill=_SUM_FILL, fmt=None):
-        cell = ws.cell(row, col_i + 1)
-        cell.border, cell.alignment, cell.fill = _BORDER, _CENTER, fill
-        cell.font = Font(name=_FONT, size=10, bold=True)
-        if value is not None:
-            cell.value = value
-        if fmt:
-            cell.number_format = fmt
-        return cell
+    def _foot_row(row):
+        if s.foot_height:
+            ws.row_dimensions[row].height = s.foot_height
+        for c in printable:
+            _apply(ws.cell(row, c), s.foot_st[c])
+
+    def _foot(row, i, value, fill=None):
+        cell = ws.cell(row, colmap[i])
+        cell.value = value
+        if fill is not None:
+            cell.fill = copy(fill)
+        if not isinstance(value, str) or value.startswith("="):
+            fmt = s.foot_st[colmap[i]]["number_format"]
+            cell.number_format = fmt if fmt not in (None, "General") else number_format
 
     if records and cash is not None:  # 카드 양식: 현금영수증 줄 + 계
         r += 1
-        for c in range(nprint):
-            _footer_cell(r, c)
-        _footer_cell(r, idx["kind"], "현금영수증")
+        _foot_row(r)
+        _foot(r, idx["kind"], "현금영수증")
         amt = idx["amount"]
-        _footer_cell(r, amt, cash["amount"], _SUM_FILL if cash["amount"] is not None else _BLANK_FILL, number_format)
+        _foot(r, amt, cash["amount"], None if cash["amount"] is not None else _BLANK_FILL)
         cash_row = r
         r += 1
-        for c in range(nprint):
-            _footer_cell(r, c)
-        L = get_column_letter(amt + 1)
-        _footer_cell(r, idx["approval_no"], "계")
-        _footer_cell(r, amt, f"=SUM({L}{first}:{L}{last})+{L}{cash_row}", fmt=number_format)
+        _foot_row(r)
+        L = letter(amt)
+        _foot(r, idx["approval_no"], "계")
+        _foot(r, amt, f"=SUM({L}{first}:{L}{last})+{L}{cash_row}")
     elif records and sum_fields:
         r += 1
-        for c in range(nprint):
-            _footer_cell(r, c)
+        _foot_row(r)
         sum_idx = [idx[f] for f in sum_fields if f in idx]
         if sum_idx:
-            _footer_cell(r, max(min(sum_idx) - 1, 0), "계")
+            label_i = min(sum_idx, key=lambda i: colmap[i])
+            label_col = max(colmap[label_i] - 1, printable[0])
+            lab = ws.cell(r, label_col)
+            lab.value = "계"
             for i in sum_idx:
-                L = get_column_letter(i + 1)
-                _footer_cell(r, i, f"=SUM({L}{first}:{L}{last})", fmt=number_format)
+                L = letter(i)
+                _foot(r, i, f"=SUM({L}{first}:{L}{last})")
 
     if notes:
         r += 2
         for n in notes:
-            ws.cell(r, 1, n).font = Font(name=_FONT, size=9, italic=True, color="666666")
+            ws.cell(r, printable[0], n).font = copy(s.note_font)
             r += 1
 
-    ws.freeze_panes = ws.cell(hrow + 1, 1)
-    ws.page_setup.orientation = "portrait"
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.print_title_rows = f"{hrow}:{hrow}"
-    ws.print_area = f"A1:{get_column_letter(nprint)}{r}"
+    ws.print_area = f"A1:{get_column_letter(printable[-1])}{r}"
 
     try:
-        wb.save(path)
+        s.wb.save(path)
     except PermissionError:
         raise ConversionError(f"결과 파일이 엑셀에서 열려 있습니다. 닫은 뒤 다시 시도해 주세요.\n{path}")
+    return s.warnings
 
 
 # ---------------------------------------------------------------- 공개 API
@@ -545,8 +740,13 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
     out_path = os.path.join(out_dir, f"{fname}.xlsx")
     if unique:
         out_path = unique_path(out_path)
-    write_workbook(out_path, shown.strftime("%m%d"), title_text, conv["output"], records,
-                   conv.get("sum", []), conv.get("number_format", "0"), notes, cash, conv.get("row_height"))
+    tpl_rel = conv.get("template")
+    tpl = resolve_template(tpl_rel)
+    if tpl_rel and not tpl:
+        warnings.append(f"호텔 양식 파일({tpl_rel})이 없어 config.json의 기본 서식으로 만들었습니다.")
+    warnings += write_workbook(out_path, shown.strftime("%m%d"), title_text, conv["output"], records,
+                               conv.get("sum", []), conv.get("number_format", "0"), notes, cash,
+                               conv.get("row_height"), template=tpl, font_cfg=conv.get("font"))
     return {"output": out_path, "count": len(records), "warnings": warnings, "title": conv["title"]}
 
 
