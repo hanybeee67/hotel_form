@@ -71,7 +71,7 @@
       "include": {"response": ["성공"]},
       "cash_keywords": ["현금"],
       "cash_footer": true,
-      "number_format": "0",
+      "number_format": "#,##0",
       "warn_missing": ["card_no", "biz_no", "acquirer", "merchant_no", "kind", "approval_no"],
       "output": [
         {"header": "객실",       "field": "room",        "width": 20.66, "fill_if_empty": true},
@@ -111,7 +111,7 @@
       "room_format": "pad4",
       "sort_by_room": true,
       "check_total": true,
-      "number_format": "0",
+      "number_format": "#,##0",
       "warn_missing": ["guest", "arrival", "departure", "company"],
       "output": [
         {"header": "객실",   "field": "room",      "width": 23.5},

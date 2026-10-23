@@ -103,7 +103,7 @@ def test_income(cfg, tmp_path):
     for ref in ("A2", "E3", "I5", "B4"):
         b = ws[ref].border
         assert all(getattr(b, s).style for s in ("left", "right", "top", "bottom")), ref
-        assert b.left.color.rgb.endswith("000000")
+        assert b.left.color.rgb == "FF000000"  # 불투명 검정
     assert ws["A3"].border.left.style == "medium" and ws["I3"].border.right.style == "medium"
     assert ws["E5"].border.bottom.style == "medium" and ws["E4"].border.bottom.style == "thin"
     ps = ws.page_setup
@@ -217,6 +217,18 @@ def test_repo_templates(cfg, tmp_path, monkeypatch, kind, data, title_size, body
         assert ws.column_dimensions[col].width == tpl.column_dimensions[col].width
     assert ws.row_dimensions[3].height == tpl.row_dimensions[3].height
     assert "10/22" in v[0][0]
+    # 모든 셀 서식에 '테두리 적용' 표시가 있어야 엑셀·호환 프로그램 인쇄에서 선이 보인다
+    import re
+    import zipfile
+    styles = zipfile.ZipFile(res["output"]).read("xl/styles.xml").decode()
+    xfs = re.findall(r"<xf [^>]*>", re.search(r"<cellXfs.*?</cellXfs>", styles, re.S).group(0))
+    assert xfs and all('applyBorder="1"' in x and 'applyFill="1"' in x for x in xfs)
+    assert ws["B3"].border.bottom.style and ws["B3"].border.bottom.color.rgb == "FF000000"
+    assert ws["B3"].fill.fill_type in (None, "none")  # 흰색 채우기 없음
+    if kind in ("income", "card", "credit"):  # 금액은 세 자리마다 콤마
+        money = {"income": "H", "card": "H", "credit": "F"}[kind]
+        nums = [c for c in ws[money][2:] if isinstance(c.value, (int, float)) or str(c.value).startswith("=")]
+        assert nums and all("#,##0" in c.number_format for c in nums), [c.number_format for c in nums]
     if kind == "breakfast":
         firsts = [r[0] for r in v]
         assert "외부식사" in firsts and any(str(x).startswith("조식 명단에") for x in firsts)
