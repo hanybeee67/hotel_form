@@ -335,7 +335,7 @@ def _is_breakfast(val, no_values):
 # ---------------------------------------------------------------- 엑셀 출력
 _THIN = Side(style="thin", color="000000")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
-_BLANK_FILL = PatternFill("solid", fgColor="FFF2B3")  # 근무자가 직접 확인/입력할 칸
+_BLANK_FILL = PatternFill("solid", fgColor="FFFFF2B3")  # 근무자가 직접 확인/입력할 칸
 _NO_FILL = PatternFill(fill_type=None)
 _CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 _ONE_LINE = Alignment(horizontal="center", vertical="center", shrink_to_fit=True)  # 호텔 양식처럼 한 줄 (넘치면 글자 축소)
@@ -576,17 +576,29 @@ def _template_sheet(path, sheet_name, title_text, out_cols):
 _LINE = "FF000000"  # 불투명 검정 (앞 FF = 투명도 없음. 00이면 일부 프로그램에서 선이 안 보일 수 있음)
 
 
+def _is_blank_fill(cell):
+    return cell.fill.fill_type == "solid" and (cell.fill.fgColor.rgb or "").upper().endswith("FFF2B3")
+
+
 def _draw_grid(ws, r0, r1, c0, c1):
-    """표 전체에 검은 선을 긋는다: 안쪽은 가는 선, 바깥 테두리는 굵은 선 (어느 화면·인쇄에서도 보이게 색을 지정)."""
+    """표 전체에 검은 선을 긋는다: 안쪽은 가는 선, 바깥 테두리는 굵은 선 (어느 화면·인쇄에서도 보이게 색을 지정).
+    노란 입력 칸(선/후·숙박수 등)끼리 맞닿은 경계는 가는 선이 묻혀 안 보인다는 지적(2026-10-23) → 노란 칸 둘레는 굵은 선."""
     thin, thick = Side(style="thin", color=_LINE), Side(style="medium", color=_LINE)
     for r in range(r0, r1 + 1):
         for c in range(c0, c1 + 1):
             cell = ws.cell(r, c)
             if cell.fill.fill_type == "solid" and (cell.fill.fgColor.rgb or "").upper().endswith("FFFFFF"):
                 cell.fill = PatternFill(fill_type=None)  # 흰색 채우기는 필요 없음 (노란 입력 칸만 색 유지)
-            cell.border = Border(left=thick if c == c0 else thin, right=thick if c == c1 else thin,
-                                          top=thick if r in (r0, r0 + 1) else thin,
-                                          bottom=thick if r in (r1, r0) else thin)
+    for r in range(r0, r1 + 1):
+        for c in range(c0, c1 + 1):
+            cell = ws.cell(r, c)
+            me = _is_blank_fill(cell)
+            near = lambda rr, cc: r0 <= rr <= r1 and c0 <= cc <= c1 and _is_blank_fill(ws.cell(rr, cc))
+            cell.border = Border(
+                left=thick if c == c0 or me or near(r, c - 1) else thin,
+                right=thick if c == c1 or me or near(r, c + 1) else thin,
+                top=thick if r in (r0, r0 + 1) or (me and not near(r - 1, c)) or (near(r - 1, c) and not me) else thin,
+                bottom=thick if r in (r1, r0) or (me and not near(r + 1, c)) or (near(r + 1, c) and not me) else thin)
 
 
 def _fit_a4(ws, hrow):
@@ -607,7 +619,7 @@ def _fit_a4(ws, hrow):
 
 def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                    number_format="0", notes=None, cash=None, row_height=None,
-                   template=None, font_cfg=None):
+                   template=None, font_cfg=None, sum_label="계", sum_label_field=None, drop_trailer=()):
     """template(호텔 양식 경로)가 있으면 양식을 열어 값만 채우고, 없으면 font_cfg로 새로 만든다.
     반환: 경고 목록"""
     if template:
@@ -709,13 +721,18 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
         if sum_idx:
             label_i = min(sum_idx, key=lambda i: colmap[i])
             label_col = max(colmap[label_i] - 1, printable[0])
+            if sum_label_field in idx:  # 예: 조식명단은 객실 칸에 '합계'
+                label_col = colmap[idx[sum_label_field]]
             lab = ws.cell(r, label_col)
-            lab.value = "계"
+            lab.value = sum_label
             for i in sum_idx:
                 L = letter(i)
                 _foot(r, i, f"=SUM({L}{first}:{L}{last})")
 
+    drop = {norm(x) for x in drop_trailer}
     for cells, height, merges in s.trailer:  # 양식의 표 아래 행(외부식사·안내 문구)을 그대로 붙인다
+        if cells and norm(cells[0][1]) in drop:  # 예: 조식명단 '외부식사' 행은 합계 행으로 대체
+            continue
         r += 1
         for c, v, st in cells:
             cell = ws.cell(r, c)
@@ -918,6 +935,8 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
         raise ConversionError("변환할 데이터 행이 없습니다. 파일 내용이나 조건(조식 대상 등)을 확인해 주세요.")
 
     shown = bdate + dt.timedelta(days=conv.get("date_offset_days", 0))
+    if conv.get("title_date") == "today":  # 조식명단: 영업일이 아니라 서류를 만드는 날(오늘) 날짜
+        shown = dt.date.today()
     md = shown.strftime("%m/%d")
     title_text = conv["sheet_title"].format(md=md)
     fname = conv["file_pattern"].format(date=shown.strftime("%Y-%m-%d"), m=shown.month, d=shown.day)
@@ -933,7 +952,9 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
         warnings.append(f"호텔 양식 파일({tpl_rel})이 없어 config.json의 기본 서식으로 만들었습니다.")
     warnings += write_workbook(out_path, shown.strftime("%m%d"), title_text, conv["output"], records,
                                conv.get("sum", []), conv.get("number_format", "0"), notes, cash,
-                               conv.get("row_height"), template=tpl, font_cfg=conv.get("font"))
+                               conv.get("row_height"), template=tpl, font_cfg=conv.get("font"),
+                               sum_label=conv.get("sum_label", "계"), sum_label_field=conv.get("sum_label_field"),
+                               drop_trailer=conv.get("drop_trailer", ()))
     return {"output": out_path, "count": len(records), "warnings": warnings, "title": conv["title"]}
 
 

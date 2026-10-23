@@ -134,6 +134,11 @@
       "font": {"name": "맑은 고딕", "title": 26, "title_bold": true, "header": 18, "header_bold": true, "body": 18, "body_bold": true,
                "title_height": 69.95, "header_height": 54.95, "row_height": 54.95, "header_fill": null, "sum_fill": null},
       "date_offset_days": 0,
+      "title_date": "today",
+      "sum": ["pax"],
+      "sum_label": "합계",
+      "sum_label_field": "room",
+      "drop_trailer": ["외부식사"],
       "source_fields": {
         "room":      ["객실번호", "객실#", "객실", "룸", "호실", "Room", "Rm"],
         "guest":     ["고객명", "투숙객명", "투숙객", "성명", "Guest", "Guest Name"],

@@ -106,6 +106,10 @@ def test_income(cfg, tmp_path):
         assert b.left.color.rgb == "FF000000"  # 불투명 검정
     assert ws["A3"].border.left.style == "medium" and ws["I3"].border.right.style == "medium"
     assert ws["E5"].border.bottom.style == "medium" and ws["E4"].border.bottom.style == "thin"
+    # 노란 입력 칸(선/후·숙박수) 둘레는 굵은 선이라 서로 맞닿아도 경계가 보인다
+    assert ws["F3"].border.right.style == "medium" and ws["G3"].border.left.style == "medium"
+    assert ws["F3"].border.left.style == "medium" and ws["E3"].border.right.style == "medium"
+    assert ws["F3"].fill.fgColor.rgb == "FFFFF2B3"
     ps = ws.page_setup
     assert int(ps.paperSize) == 9 and ps.orientation == "landscape" and ps.fitToWidth == 1 and ps.fitToHeight == 0
     assert ws.print_options.horizontalCentered and ws.print_title_rows == "$1:$2"
@@ -216,7 +220,9 @@ def test_repo_templates(cfg, tmp_path, monkeypatch, kind, data, title_size, body
     for col in "ABCD":
         assert ws.column_dimensions[col].width == tpl.column_dimensions[col].width
     assert ws.row_dimensions[3].height == tpl.row_dimensions[3].height
-    assert "10/22" in v[0][0]
+    import datetime as dt
+    expect = dt.date.today().strftime("%m/%d") if kind == "breakfast" else "10/22"  # 조식은 서류 만드는 날
+    assert expect in v[0][0]
     # 모든 셀 서식에 '테두리 적용' 표시가 있어야 엑셀·호환 프로그램 인쇄에서 선이 보인다
     import re
     import zipfile
@@ -231,6 +237,9 @@ def test_repo_templates(cfg, tmp_path, monkeypatch, kind, data, title_size, body
         assert nums and all("#,##0" in c.number_format for c in nums), [c.number_format for c in nums]
     if kind == "breakfast":
         firsts = [r[0] for r in v]
-        assert "외부식사" in firsts and any(str(x).startswith("조식 명단에") for x in firsts)
+        assert "외부식사" not in firsts and any(str(x).startswith("조식 명단에") for x in firsts)
+        total = next(r for r in v if r[0] == "합계")  # 외부식사 대신 합계 행 + 인원 합 수식
+        n = len([r for r in v[2:] if r[0] and (str(r[0]).isdigit() or r[0] == "단체")])
+        assert total[2] == f"=SUM(C3:C{2 + n})"
         assert ws["E3"].border.right.style == "medium"  # 병합된 Sign 칸의 오른쪽 열도 테두리 유지
         assert ws.auto_filter.ref.startswith("A2:E")
