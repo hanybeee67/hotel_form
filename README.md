@@ -19,7 +19,7 @@
 
 ## exe 만들기
 - **방법 A (Windows PC)**: `build_exe.bat` 더블클릭 → `dist` 폴더의 exe + config.json을 호텔 PC로 복사
-- **방법 B (GitHub, 권장)**: push하면 자동으로 테스트 → exe 빌드. Actions → "Build Windows EXE" → 맨 위 실행 → 아래 Artifacts의 `GeoseongClosingTool` 다운로드(압축 해제하면 exe + config.json + 사용법.txt)
+- **방법 B (GitHub, 권장)**: 빌드가 끝나면 https://github.com/hanybeee67/hotel_form/releases/latest 에 `GeoseongClosingTool.zip`이 올라옴(로그인 필요). 또는 push하면 자동으로 테스트 → exe 빌드. Actions → "Build Windows EXE" → 맨 위 실행 → 아래 Artifacts의 `GeoseongClosingTool` 다운로드(압축 해제하면 exe + config.json + 사용법.txt)
 - 호텔 PC가 Windows 7이면 Python 3.8로 빌드
 
 ## 양식 조정 (코드 수정 없이 config.json만 편집)

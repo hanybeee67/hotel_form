@@ -117,6 +117,7 @@ tools/make_templates.py  호텔 실제 파일(.xls/.xlsx) → 빈 양식 생성 
 6. 일괄 변환 결과를 한 폴더/통합 파일로 정리, 당직일지 등 범위 확장은 사용자와 협의
 
 ## 6-1. 배포 방법 (사용자 확인 2026-10-23)
+- 다운로드: Artifacts 링크가 사용자 화면에서 눌리지 않는 문제(2026-10-23) → 빌드마다 **Releases**(`build-<번호>` 태그, 최신으로 표시)에 `GeoseongClosingTool.zip`을 올림. 안내 주소: https://github.com/hanybeee67/hotel_form/releases/latest
 - 사용자는 GitHub Artifacts의 zip을 **카카오톡(나와의 채팅)** 으로 호텔 PC에 옮겨 실행. exe 단독 전송은 막힐 수 있어 **zip 그대로** 보내도록 안내(`docs/사용법.txt`)
 - 결과물은 엑셀(.xlsx)로, 근무자가 노란 칸을 수기 입력 후 저장·인쇄
 

@@ -5,6 +5,9 @@ on:
     branches: [main, "claude/**"]
   workflow_dispatch:
 
+permissions:
+  contents: write   # 릴리스(다운로드 페이지)에 zip을 올리기 위해 필요
+
 jobs:
   build:
     runs-on: windows-latest
@@ -54,3 +57,20 @@ jobs:
           name: GeoseongClosingTool
           path: release/GeoseongClosingTool
           retention-days: 90
+
+      - name: zip 만들기
+        shell: pwsh
+        run: Compress-Archive -Path release/GeoseongClosingTool -DestinationPath GeoseongClosingTool.zip -Force
+
+      - name: 다운로드 페이지(Releases)에 올리기
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: 마감 도우미 (빌드 ${{ github.run_number }})
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: GeoseongClosingTool.zip
+          body: |
+            아래 **GeoseongClosingTool.zip** 을 눌러 받으세요.
+            압축을 풀지 말고 그대로 카카오톡 '나와의 채팅'으로 보내 호텔 PC에서 압축을 풀어 실행합니다.
+            (exe, config.json, templates 폴더는 항상 같은 폴더에)
