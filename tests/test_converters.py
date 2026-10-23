@@ -223,12 +223,24 @@ def test_repo_templates(cfg, tmp_path, monkeypatch, kind, data, title_size, body
     import datetime as dt
     expect = dt.date.today().strftime("%m/%d") if kind == "breakfast" else "10/22"  # 조식은 서류 만드는 날
     assert expect in v[0][0]
-    # 모든 셀 서식에 '테두리 적용' 표시가 있어야 엑셀·호환 프로그램 인쇄에서 선이 보인다
+    # 깨끗한 표준 서식만: 옛 .xls 색상표·흰색 채우기 없음, 표의 모든 칸 네 변에 불투명 검정 선
     import re
     import zipfile
     styles = zipfile.ZipFile(res["output"]).read("xl/styles.xml").decode()
-    xfs = re.findall(r"<xf [^>]*>", re.search(r"<cellXfs.*?</cellXfs>", styles, re.S).group(0))
-    assert xfs and all('applyBorder="1"' in x and 'applyFill="1"' in x for x in xfs)
+    fills = re.search(r"<fills.*?</fills>", styles, re.S).group(0)
+    assert "FFFFFF\"" not in fills  # 흰색 채우기 없음 (노란 입력 칸만)
+    last_row = max(r for r in range(1, ws.max_row + 1) if any(ws.cell(r, c).value is not None for c in range(1, 4)))
+    right = {"income": 9, "card": 8, "credit": 6, "breakfast": 5}[kind]
+    for r in range(2, last_row + 1):
+        for c in range(1, right + 1):
+            b = ws.cell(r, c).border
+            merged = next((m for m in ws.merged_cells.ranges if (r, c) in m.cells), None)
+            for s in ("left", "right", "top", "bottom"):
+                if merged and {"left": c > merged.min_col, "right": c < merged.max_col,
+                               "top": r > merged.min_row, "bottom": r < merged.max_row}[s]:
+                    continue  # 병합 칸 안쪽 변은 보이지 않으므로 건너뜀
+                sd = getattr(b, s)
+                assert sd.style in ("thin", "medium") and sd.color.rgb == "FF000000", (r, c, s)
     assert ws["B3"].border.bottom.style and ws["B3"].border.bottom.color.rgb == "FF000000"
     assert ws["B3"].fill.fill_type in (None, "none")  # 흰색 채우기 없음
     if kind in ("income", "card", "credit"):  # 금액은 세 자리마다 콤마

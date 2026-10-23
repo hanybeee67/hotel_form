@@ -11,6 +11,7 @@ from html.parser import HTMLParser
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.cell.cell import MergedCell
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
@@ -762,41 +763,78 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
         ws.page_setup.blackAndWhite = True
 
     try:
-        s.wb.save(path)
-        _mark_styles_applied(path)
+        _clean_copy(s.ws).save(path)
     except PermissionError:
         raise ConversionError(f"결과 파일이 엑셀에서 열려 있습니다. 닫은 뒤 다시 시도해 주세요.\n{path}")
     return s.warnings
 
 
-def _mark_styles_applied(path):
-    """셀 서식마다 '테두리·채우기·글꼴·표시 형식을 적용함' 표시(applyBorder 등)를 붙인다.
-    openpyxl은 이 표시를 쓰지 않는데, 일부 엑셀·호환 프로그램은 표시가 없으면 테두리를 무시해
-    화면·인쇄에 선이 안 나온다."""
-    import re
-    import shutil
-    import tempfile
-    import zipfile
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx", dir=os.path.dirname(os.path.abspath(path)))
-    tmp.close()
-    with zipfile.ZipFile(path) as zin, zipfile.ZipFile(tmp.name, "w", zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            data = zin.read(item.filename)
-            if item.filename == "xl/styles.xml":
-                xml = data.decode("utf-8")
-                m = re.search(r"<cellXfs.*?</cellXfs>", xml, re.S)
-                if m:
-                    def flag(x):
-                        tag = x.group(0)
-                        for attr in ("applyNumberFormat", "applyFont", "applyFill", "applyBorder"):
-                            if attr not in tag:
-                                tag = tag.replace("<xf ", f'<xf {attr}="1" ', 1)
-                        return tag
-                    xfs = re.sub(r"<xf [^>]*>", flag, m.group(0))
-                    xml = xml[:m.start()] + xfs + xml[m.end():]
-                data = xml.encode("utf-8")
-            zout.writestr(item, data)
-    shutil.move(tmp.name, path)
+def _clean_copy(ws):
+    """완성된 시트를 새 통합 문서로 옮겨 담는다 (값·글꼴·크기·테두리·정렬·표시 형식·열 너비·행 높이·병합·인쇄 설정만).
+    호텔 .xls에서 넘어온 색상표·흰색 채우기 같은 군더더기를 모두 버리고, 엑셀이 가장 확실히 읽는 표준 서식만 남긴다
+    (2026-10-23 '엑셀에서 표 선이 안 보인다' 지적 3회)."""
+    wb = Workbook()
+    out = wb.active
+    out.title = ws.title
+
+    def rgb(color):
+        v = getattr(color, "rgb", None)
+        return ("FF" + v[-6:]) if isinstance(v, str) and len(v) >= 6 else None
+
+    def side(sd):
+        return Side(style=sd.style, color=_LINE) if sd is not None and sd.style else Side()
+
+    # 병합을 먼저 해 두어야 병합 칸 가장자리 선이 뒤에서 덮어쓰이지 않는다
+    for mr in ws.merged_cells.ranges:
+        out.merge_cells(str(mr))
+    for row in ws.iter_rows():
+        for c in row:
+            if c.value is None and not c.has_style:
+                continue
+            d = out.cell(c.row, c.column)
+            if not isinstance(d, MergedCell):
+                d.value = c.value
+            f = c.font
+            d.font = Font(name=f.name or "굴림", size=f.sz or 11, bold=bool(f.b), italic=bool(f.i), color=rgb(f.color))
+            b = c.border
+            d.border = Border(left=side(b.left), right=side(b.right), top=side(b.top), bottom=side(b.bottom))
+            a = c.alignment
+            d.alignment = Alignment(horizontal=a.horizontal, vertical=a.vertical, wrap_text=bool(a.wrap_text),
+                                    shrink_to_fit=bool(a.shrink_to_fit))
+            if _is_blank_fill(c):
+                d.fill = PatternFill("solid", fgColor="FFFFF2B3", bgColor="FFFFF2B3")
+            d.number_format = c.number_format or "General"
+    for key, dim in ws.column_dimensions.items():
+        if dim.width:
+            out.column_dimensions[key].width = dim.width
+    for r, dim in ws.row_dimensions.items():
+        if dim.height:
+            out.row_dimensions[r].height = dim.height
+    for dv in ws.data_validations.dataValidation:
+        nd = DataValidation(type=dv.type, operator=dv.operator, formula1=dv.formula1, allow_blank=dv.allow_blank,
+                            showErrorMessage=dv.showErrorMessage, errorTitle=dv.errorTitle, error=dv.error,
+                            showInputMessage=dv.showInputMessage, promptTitle=dv.promptTitle, prompt=dv.prompt)
+        out.add_data_validation(nd)
+        nd.add(str(dv.sqref))
+    if ws.auto_filter.ref:
+        out.auto_filter.ref = ws.auto_filter.ref
+    out.freeze_panes = ws.freeze_panes
+    if ws.print_area:
+        out.print_area = ws.print_area[0] if isinstance(ws.print_area, (list, tuple)) else ws.print_area.split("!")[-1]
+    if ws.print_title_rows:
+        out.print_title_rows = ws.print_title_rows.replace("$", "")
+    ps, src = out.page_setup, ws.page_setup
+    ps.orientation, ps.paperSize = src.orientation, src.paperSize
+    ps.fitToWidth, ps.fitToHeight = src.fitToWidth, src.fitToHeight
+    ps.blackAndWhite = src.blackAndWhite
+    out.sheet_properties.pageSetUpPr.fitToPage = True
+    for k in ("left", "right", "top", "bottom", "header", "footer"):
+        setattr(out.page_margins, k, getattr(ws.page_margins, k))
+    out.print_options.horizontalCentered = ws.print_options.horizontalCentered
+    out.oddFooter.center.text = ws.oddFooter.center.text
+    if ws.sheet_view.zoomScale:
+        out.sheet_view.zoomScale = ws.sheet_view.zoomScale
+    return wb
 
 
 # ---------------------------------------------------------------- 공개 API
