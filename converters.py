@@ -921,14 +921,18 @@ def _parse_date(s):
 
 
 def _bf_people(remark, conv):
-    """비고 문구로 조식 대상 여부와 조식 인원을 판단. (대상여부, 인원 또는 None)"""
+    """비고 문구로 조식 대상 여부와 조식 인원을 판단. (대상여부, 인원 또는 None, 판단 이유)
+    '조식불포함'·'조식X'·'룸온리'처럼 조식이 없는 표현을 먼저 걸러 낸다 (2026-10-26: 실제 47명인데 59명으로 집계된 문제)."""
     t = remark or ""
     if re.search(conv["bf_exclude_regex"], t, re.I):
-        return False, None
+        return False, None, "룸온리·조식 불포함"
     if re.search(conv["bf_include_regex"], t, re.I):
-        m = re.search(r"(\d+)\s*인", t)
-        return True, (int(m.group(1)) if m else None)
-    return False, None
+        # 인원: '1인 조포', '2인 조식 포함', '조식 2인', '조식2명' → 조식 바로 앞뒤의 숫자. 없으면 'N인'(단 'N인실'은 객실 종류라 제외)
+        m = (re.search(r"(\d+)\s*(?:인|명)\s*(?:조식|조포|b\s*/?\s*f)", t, re.I)
+             or re.search(r"(?:조식|조포|b\s*/?\s*f)[^\d]{0,6}(\d+)\s*(?:인|명)", t, re.I)
+             or re.search(r"(\d+)\s*(?:인|명)(?!\s*실)", t))
+        return True, (int(m.group(1)) if m else None), "조식 포함"
+    return False, None, "조식 표시 없음"
 
 
 _HANGUL_NAME = re.compile(r"[가-힣]{2,4}")
@@ -1023,13 +1027,14 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
     if kind == "breakfast":
         has_col = "breakfast" in mapped and any(r.get("breakfast") not in ("", None) for r in records)
         before = len(records)
-        kept = []
+        kept, reasons, guessed = [], {}, []
         for rec in records:
             if has_col:
-                ok, n = _is_breakfast(rec.get("breakfast"), conv["no_breakfast_values"]), None
+                ok, n, why = _is_breakfast(rec.get("breakfast"), conv["no_breakfast_values"]), None, "조식 열"
             else:
-                ok, n = _bf_people(rec.get("remark"), conv)
+                ok, n, why = _bf_people(rec.get("remark"), conv)
             if not ok:
+                reasons[why] = reasons.get(why, 0) + 1
                 continue
             if n is not None:
                 rec["pax"] = n
@@ -1037,9 +1042,28 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
                 a, c = rec.get("adults"), rec.get("children")
                 if a is not None or c is not None:
                     rec["pax"] = (a or 0) + (c or 0)
+                    guessed.append(rec.get("room"))
             kept.append(rec)
-        records = kept
-        warnings.append(f"전체 {before}객실 중 조식 대상 {len(records)}객실을 뽑았습니다 (비고 문구 기준).")
+        # 같은 객실이 여러 줄이면(동숙자 등) 한 번만 센다
+        by_room, dup = {}, []
+        for rec in kept:
+            room = rec.get("room")
+            if room in by_room:
+                dup.append(room)
+                prev = by_room[room]
+                if (rec.get("pax") or 0) > (prev.get("pax") or 0):
+                    prev["pax"] = rec["pax"]
+                continue
+            by_room[room] = rec
+        records = list(by_room.values())
+        total = sum(r.get("pax") or 0 for r in records)
+        excl = ", ".join(f"{k} {v}객실" for k, v in reasons.items())
+        warnings.append(f"조식 대상 {len(records)}객실 {total}명 (전체 {before}줄 중" + (f" 제외: {excl}" if excl else "") + ").")
+        if dup:
+            warnings.append(f"같은 객실이 여러 줄이라 한 번만 셌습니다: {', '.join(sorted(set(dup)))}")
+        if guessed:
+            warnings.append("비고에 인원(N인)이 없어 성인+소인 수로 채운 객실 — 실제 조식 인원을 확인해 주세요: "
+                            + ", ".join(guessed))
         if conv.get("group_rows"):
             records, groups = _group_breakfast(records, conv)
             for name, n, pax in groups:
@@ -1049,7 +1073,7 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
             warnings.append(f"조식 대상 중 {no_pax}객실은 인원을 알 수 없어 빈칸입니다. 직접 입력해 주세요.")
         if "remark" not in mapped and not has_col:
             warnings.append("원본에 '비고'(조식 표시) 열이 없어 조식 대상을 가려내지 못했습니다. 전체를 확인해 주세요.")
-        warnings.append("비고에 '조식'/'조포'가 있는 객실만 뽑았습니다('룸온리'는 제외). 비고가 다른 표현이면 알려 주세요.")
+        warnings.append("비고에 '조식 포함/조포'가 있는 객실만 뽑았습니다('룸온리'·'조식불포함'·'조식X' 등은 제외). 비고가 다른 표현이면 알려 주세요.")
 
     if cfg.get("mask_korean_names", True):
         for rec in records:

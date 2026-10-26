@@ -329,3 +329,30 @@ def test_many_rows_fit_two_a4_pages(cfg, tmp_path, monkeypatch):
     budget = 2 * ((595 - 72) / scale - (57 + 39))
     # 행 높이를 줄여 들어가거나, 글자가 잘리지 않는 최소 높이(18pt×1.3)까지 줄였으면 나머지는 엑셀의 2장 맞춤이 축소
     assert used <= budget + 1 or all(ws.row_dimensions[r].height <= 18 * 1.3 + 0.01 for r in range(3, 60))
+
+
+@pytest.mark.parametrize("remark,ok,pax", [
+    ("1인 조포", True, 1), ("2인 조식 포함", True, 2), ("조식포함", True, None), ("조식 2인", True, 2),
+    ("2인실 1인 조포", True, 1), ("조식추가 1명", True, 1), ("B/F 포함", True, None),
+    ("룸온리", False, None), ("룸 온리", False, None), ("RO", False, None), ("Room Only", False, None),
+    ("조식불포함", False, None), ("조식 미포함", False, None), ("조식X", False, None), ("조식 없음", False, None),
+    ("노조식", False, None), ("", False, None), ("늦은 체크인", False, None),
+])
+def test_breakfast_remark_rules(cfg, remark, ok, pax):
+    """실제 조식 47명인데 59명으로 집계된 문제(2026-10-26): '조식불포함' 같은 표현이 조식으로 잡히면 안 된다."""
+    got_ok, got_pax, _ = cv._bf_people(remark, cfg["converters"]["breakfast"])
+    assert (got_ok, got_pax) == (ok, pax)
+
+
+def test_breakfast_same_room_counted_once(cfg, tmp_path):
+    rows = [BREAKFAST[0],
+            [1, "가", "", "2인 조식 포함", "홍길동", "0503", 2, 0],
+            [2, "가", "", "2인 조식 포함", "홍길순", "0503", 2, 0],   # 같은 방 동숙자 줄
+            [3, "나", "", "조식불포함", "김철수", "0504", 1, 0],
+            [4, "다", "", "룸온리", "이영희", "0505", 1, 0]]
+    src = _xlsx(tmp_path / "inhouse.xlsx", rows)
+    res = cv.convert_file("breakfast", src, str(tmp_path / "out"), BDATE, cfg)
+    _, v = _values(res["output"])
+    rooms = [r[0] for r in v[2:] if r[0] and str(r[0]).isdigit()]
+    assert rooms == ["0503"]
+    assert any("1객실 2명" in w for w in res["warnings"]) and any("한 번만" in w for w in res["warnings"])
