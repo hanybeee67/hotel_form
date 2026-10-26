@@ -26,6 +26,7 @@ def no_templates(monkeypatch, tmp_path):
     """기본은 양식 파일이 없는 상태로 테스트 (저장소의 templates/ 영향 받지 않게)."""
     monkeypatch.setattr(cv, "app_dir", lambda: str(tmp_path / "app"))
     monkeypatch.setattr(cv, "bundled_dir", lambda: str(tmp_path / "app"))
+    monkeypatch.setattr(cv, "_settings_path", lambda: str(tmp_path / "settings" / "settings.json"))
     return tmp_path / "app"
 
 
@@ -285,3 +286,12 @@ def test_error_log(tmp_path, monkeypatch):
     except ValueError:
         path = cv.write_error_log("시험")
     assert path and "ValueError" in open(path, encoding="utf-8").read()
+
+
+def test_chosen_save_folder_wins(cfg, tmp_path, monkeypatch):
+    """바탕화면에서 실행해도 '저장 위치 변경'으로 고른 한희 폴더에 결과가 모인다 (설정은 내 PC에 기억)."""
+    monkeypatch.setattr(cv, "app_dir", lambda: str(tmp_path / "바탕화면"))
+    assert cv.default_out_dir(None, cfg) == str(tmp_path / "바탕화면" / "마감결과")
+    cv.save_user_setting("output_dir", str(tmp_path / "공용" / "한희" / "마감결과"))
+    assert cv.load_user_settings()["output_dir"].endswith("마감결과")
+    assert cv.default_out_dir(None, cfg) == str(tmp_path / "공용" / "한희" / "마감결과")

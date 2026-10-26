@@ -1098,9 +1098,39 @@ def write_error_log(text):
     return None
 
 
+def _settings_path():
+    """근무자가 화면에서 고른 설정(저장 위치 등)을 두는 곳: 내 PC의 AppData (공용폴더 권한과 무관)"""
+    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "GeoseongClosingTool", "settings.json")
+
+
+def load_user_settings():
+    try:
+        with open(_settings_path(), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_user_setting(key, value):
+    data = load_user_settings()
+    data[key] = value
+    path = _settings_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        raise ConversionError(f"설정을 저장하지 못했습니다: {e}")
+
+
 def default_out_dir(src_path=None, cfg=None):
-    """결과 폴더: 프로그램(exe)이 있는 폴더 안의 '마감결과' (사용자 지시 2026-10-23: 한희 폴더 안에 두기).
-    config.json의 output_dir에 다른 경로를 적으면 그곳을 쓴다 (상대 경로는 프로그램 폴더 기준)."""
+    """결과 폴더 우선순위: ① 화면의 '저장 위치 변경'으로 고른 폴더 ② config.json의 output_dir
+    ③ 프로그램(exe)이 있는 폴더 안의 '마감결과' (사용자 지시 2026-10-23: 한희 폴더 안에 두기).
+    프로그램을 바탕화면에서 실행해도 ①로 한희 폴더를 골라 두면 결과는 한희 폴더에 모인다."""
+    chosen = (load_user_settings().get("output_dir") or "").strip()
+    if chosen:
+        return chosen
     custom = ((cfg or {}).get("output_dir") or "").strip()
     if custom:
         return custom if os.path.isabs(custom) else os.path.join(app_dir(), custom)

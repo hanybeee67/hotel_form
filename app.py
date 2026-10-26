@@ -18,13 +18,13 @@ FILETYPES = [("엑셀/표 파일", "*.xlsx *.xlsm *.xls *.csv *.htm *.html"), ("
 
 # 서류 카드: (종류, 제목, 설명, ERP 메뉴 위치)
 DOCS = [
-    ("income", "수입일보", "객실 순 정렬 · 매출(NET) · 누계 수식\n선/후 · 숙박수는 노란 칸에 직접 입력",
+    ("income", "수입일보", "객실 301~713 순 정렬 · 매출(부가세 포함) · 누계 수식\n선/후 · 숙박수는 노란 칸에 직접 입력",
      "영업보고서 → 마감일보 → 수입일보 → 엑셀전환"),
     ("card", "카드 · 현금영수증 승인내역", "승인 '성공' 건만 · 현금영수증 합산 · 계\n객실 칸은 Acct#를 보고 직접 입력",
      "객실관리 → 카드결제 → 승인 내역조회 → 엑셀전환"),
     ("credit", "대외후불 리스트", "객실 순 정렬 · 금액 합계\n원본 합계와 자동 대조",
      "영업보고서 → 입금관련 → 대외 후불 리스트"),
-    ("breakfast", "조식명단", "비고의 '조식/조포' 객실만 추출 ('룸온리' 제외)\n인원은 비고의 'N인' 우선",
+    ("breakfast", "조식명단", "비고의 '조식/조포' 객실만 301~713 순서대로 ('룸온리' 제외)\n오늘 날짜 · 맨 아래 인원 합계",
      "영업보고서 → 객실/예약 → Clerk → IN HOUSE LIST"),
 ]
 
@@ -163,6 +163,8 @@ class App(tk.Tk):
         self._build()
         self._refresh_date()
         self._log("프로그램을 시작했습니다. 영업일자를 확인한 뒤 서류를 선택하세요.", "sub")
+        self.last_dir = cv.default_out_dir(None, self.cfg)
+        self._log(f"결과 저장 위치: {self.last_dir}  ('저장 위치 변경'으로 바꿀 수 있습니다)", "sub")
         self.after(100, self._poll)
 
     # ------------------------------------------------------------ 화면 구성
@@ -210,7 +212,8 @@ class App(tk.Tk):
         self.all_btn.pack(side="left", fill="x", expand=True)
         self.folder_btn = FlatButton(act, "결과 폴더 열기", self.open_folder, kind="soft", size=10, pady=11)
         self.folder_btn.pack(side="left", padx=(10, 0))
-        self.folder_btn.set_enabled(False)
+        FlatButton(act, "저장 위치 변경", self.choose_out_dir, kind="soft", size=10, pady=11).pack(
+            side="left", padx=(10, 0))
 
         # 상태 표시줄 (맨 아래 고정)
         self.status = tk.Label(self, text="대기 중", bg=C["bg"], fg=C["sub"], font=F(9), anchor="w", padx=22,
@@ -373,7 +376,7 @@ class App(tk.Tk):
         elif ev == "done":
             ok, fail = self._summary["ok"], self._summary["fail"]
             text = f"완료 — 성공 {ok}건" + (f", 실패 {fail}건" if fail else "") + \
-                   ("  ·  결과는 프로그램 폴더 안의 '마감결과' 폴더에 저장됩니다" if ok else "")
+                   ("  ·  '결과 폴더 열기'로 결과를 확인하세요" if ok else "")
             self._set_busy(False)
             self.status.configure(text=text, fg=C["err"] if fail and not ok else C["sub"])
 
@@ -397,8 +400,31 @@ class App(tk.Tk):
             self._start([(None, p) for p in paths])
 
     def open_folder(self):
-        if self.last_dir and os.path.isdir(self.last_dir):
-            open_path(self.last_dir)
+        folder = self.last_dir or cv.default_out_dir(None, self.cfg)
+        try:
+            os.makedirs(folder, exist_ok=True)
+            open_path(folder)
+        except OSError as e:
+            messagebox.showwarning("결과 폴더", f"폴더를 열 수 없습니다.\n{folder}\n({e})")
+
+    def choose_out_dir(self):
+        """예: 프로그램은 바탕화면에서 실행하고, 결과는 공용폴더의 한희 폴더에 모으고 싶을 때"""
+        if self.busy:
+            return
+        folder = filedialog.askdirectory(title="변환 결과를 저장할 폴더를 고르세요 (예: 공용폴더의 한희 폴더)",
+                                         initialdir=self.last_dir or None)
+        if not folder:
+            return
+        folder = os.path.normpath(folder)
+        if os.path.basename(folder) != "마감결과":
+            folder = os.path.join(folder, "마감결과")
+        try:
+            cv.save_user_setting("output_dir", folder)
+        except cv.ConversionError as e:
+            messagebox.showerror("저장 위치", str(e))
+            return
+        self.last_dir = folder
+        self._log(f"결과 저장 위치를 바꿨습니다: {folder}", "ok")
 
 
 def main():
