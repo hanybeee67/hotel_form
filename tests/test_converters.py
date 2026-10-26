@@ -112,7 +112,7 @@ def test_income(cfg, tmp_path):
     assert ws["F3"].border.left.style == "medium" and ws["E3"].border.right.style == "medium"
     assert ws["F3"].fill.fgColor.rgb == "FFFFF2B3"
     ps = ws.page_setup
-    assert int(ps.paperSize) == 9 and ps.orientation == "landscape" and ps.fitToWidth == 1 and ps.fitToHeight == 0
+    assert int(ps.paperSize) == 9 and ps.orientation == "landscape" and ps.fitToWidth == 1 and ps.fitToHeight == 2  # A4 너비 1장 × 최대 2장
     assert ws.print_options.horizontalCentered and ws.print_title_rows == "$1:$2"
 
 
@@ -295,3 +295,37 @@ def test_chosen_save_folder_wins(cfg, tmp_path, monkeypatch):
     cv.save_user_setting("output_dir", str(tmp_path / "공용" / "한희" / "마감결과"))
     assert cv.load_user_settings()["output_dir"].endswith("마감결과")
     assert cv.default_out_dir(None, cfg) == str(tmp_path / "공용" / "한희" / "마감결과")
+
+
+@pytest.mark.parametrize("raw,masked", [
+    ("홍길동", "홍0동"), ("김철", "김0"), ("남궁민수", "남00수"), ("정*영", "정0영"),
+    ("진양그룹-Noah Raymond", "진양그룹-Noah Raymond"), ("CHRISTOPH", "CHRISTOPH"),
+    ("Zhu bao jun / Lin jia hao", "Zhu bao jun / Lin jia hao"), ("코원필오케스트라", "코원필오케스트라"), ("", ""),
+])
+def test_mask_korean_name(raw, masked):
+    assert cv.mask_korean_name(raw) == masked
+
+
+def test_names_masked_in_documents(cfg, tmp_path):
+    rows = [CREDIT[0], CREDIT[1][:6] + ["홍길동"] + CREDIT[1][7:], CREDIT[2][:6] + ["Kim Minsu"] + CREDIT[2][7:]]
+    src = _xlsx(tmp_path / "후불.xlsx", rows)
+    _, v = _values(cv.convert_file("credit", src, str(tmp_path / "out"), BDATE, cfg)["output"])
+    assert sorted(r[1] for r in v[2:4]) == ["Kim Minsu", "홍0동"]
+
+
+def test_many_rows_fit_two_a4_pages(cfg, tmp_path, monkeypatch):
+    """객실이 많아도 A4 2장에 들어가게 행 높이를 줄이고, 글자 크기는 그대로."""
+    monkeypatch.setattr(cv, "app_dir", lambda: ROOT)  # 실제 호텔 양식 사용
+    rows = [INCOME[0]] + [["ROOM", f"손님{i}", BDATE, "2026-10-23", "D/T", "회사", f"{300 + (i % 13) + 1 + (i // 13) * 100:04d}",
+                           "", 0, 0, "", "", 1, 0, 0, 0, 0, 99000, 0] for i in range(65)]
+    src = _xlsx(tmp_path / "수입.xlsx", rows)
+    ws, v = _values(cv.convert_file("income", src, str(tmp_path / "out"), BDATE, cfg)["output"])
+    assert ws.row_dimensions[3].height < 39 and ws["B3"].font.sz == 18
+    assert ws.page_setup.fitToHeight == 2
+    # 높이 합이 A4 가로 2장(너비 맞춤 배율 기준) 안에 들어가는지 계산으로 확인
+    total_w = sum(cv._col_points(ws.column_dimensions[c].width) for c in "ABCDEFGHI")
+    scale = min(1, (842 - 0.8 * 72) / total_w)
+    used = sum(ws.row_dimensions[r].height or 15 for r in range(3, ws.max_row + 1))
+    budget = 2 * ((595 - 72) / scale - (57 + 39))
+    # 행 높이를 줄여 들어가거나, 글자가 잘리지 않는 최소 높이(18pt×1.3)까지 줄였으면 나머지는 엑셀의 2장 맞춤이 축소
+    assert used <= budget + 1 or all(ws.row_dimensions[r].height <= 18 * 1.3 + 0.01 for r in range(3, 60))

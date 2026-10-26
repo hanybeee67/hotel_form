@@ -3,6 +3,8 @@
   "business_day_rollover_hour": 12,
   "valid_rooms": [301, 713],
   "output_dir": "",
+  "fit_pages": 2,
+  "mask_korean_names": true,
   "mask_card_number": true,
   "converters": {
     "income": {

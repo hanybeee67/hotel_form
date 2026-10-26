@@ -618,9 +618,42 @@ def _fit_a4(ws, hrow):
     ws.oddFooter.center.text = "&P / &N"
 
 
+def _col_points(width):
+    """엑셀 열 너비(글자 수 단위) → 포인트 (기본 글꼴 최대 숫자 폭 7px 기준)"""
+    return ((width or 8.43) * 7 + 5) * 0.75
+
+
+def _fit_pages(ws, hrow, first, last, right, pages):
+    """A4 'pages'장 안에 들어가도록: 너비는 1장, 세로는 최대 pages장.
+    넘치면 글자 크기는 그대로 두고 행 높이(줄 간격)만 필요한 만큼 줄인다 (사용자 지시 2026-10-26).
+    그래도 넘치면 엑셀의 '1쪽 너비 × pages쪽 높이 맞춤'이 마지막으로 축소한다."""
+    landscape = ws.page_setup.orientation == "landscape"
+    page_w, page_h = (842, 595) if landscape else (595, 842)
+    m = ws.page_margins
+    usable_w = page_w - (m.left + m.right) * 72
+    usable_h = page_h - (m.top + m.bottom) * 72
+    total_w = sum(_col_points(ws.column_dimensions[get_column_letter(c)].width) for c in range(1, right + 1))
+    scale = min(1.0, usable_w / total_w) if total_w else 1.0
+    height = lambda r: ws.row_dimensions[r].height or 15
+    repeat = sum(height(r) for r in range(1, hrow + 1))  # 쪽마다 반복되는 제목·머리글
+    avail = pages * (usable_h / scale - repeat) + repeat
+    need = sum(height(r) for r in range(1, last + 1))
+    if need > avail:
+        body = sum(height(r) for r in range(first, last + 1))
+        k = max(0.0, (avail - repeat)) / body if body else 1.0
+        for r in range(first, last + 1):
+            size = max((ws.cell(r, c).font.sz or 11) for c in range(1, right + 1))
+            lines = max(str(ws.cell(r, c).value or "").count("\n") + 1 for c in range(1, right + 1))
+            floor = size * 1.3 * lines  # 글자가 잘리지 않는 최소 높이
+            ws.row_dimensions[r].height = round(max(floor, height(r) * k), 2)
+    ps = ws.page_setup
+    ps.fitToWidth, ps.fitToHeight = 1, pages
+
+
 def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                    number_format="0", notes=None, cash=None, row_height=None,
-                   template=None, font_cfg=None, sum_label="계", sum_label_field=None, drop_trailer=()):
+                   template=None, font_cfg=None, sum_label="계", sum_label_field=None, drop_trailer=(),
+                   fit_pages=None):
     """template(호텔 양식 경로)가 있으면 양식을 열어 값만 채우고, 없으면 font_cfg로 새로 만든다.
     반환: 경고 목록"""
     if template:
@@ -756,6 +789,8 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
     _draw_grid(ws, 1, table_end, 1, right)
     ws.print_area = f"A1:{get_column_letter(right)}{r}"
     _fit_a4(ws, hrow)
+    if fit_pages:
+        _fit_pages(ws, hrow, first, table_end, right, fit_pages)
     if ws.auto_filter.ref and records:
         ws.auto_filter.ref = f"A{hrow}:{get_column_letter(right)}{last}"
     if manual or (cash is not None and cash.get("amount") is None):
@@ -896,6 +931,25 @@ def _bf_people(remark, conv):
     return False, None
 
 
+_HANGUL_NAME = re.compile(r"[가-힣]{2,4}")
+_ERP_MASKED = re.compile(r"[가-힣][*＊]+[가-힣]?|[가-힣]{2}[*＊]+[가-힣]?")
+
+
+def mask_korean_name(name, mark="0"):
+    """개인정보 보호 (사용자 지시 2026-10-26): 한국인 이름만 가운데 글자를 0으로.
+    3자 홍길동→홍0동, 외자 2자 김철→김0, 4자 남궁민수→남00수.
+    외국인 이름·영문 섞인 이름(진양그룹-Noah)·5자 이상(단체명 등)은 그대로.
+    ERP가 이미 *로 가린 이름(정*영)은 *를 0으로 바꿔 표기를 통일."""
+    s = (name or "").strip()
+    if _ERP_MASKED.fullmatch(s):
+        return re.sub(r"[*＊]", mark, s)
+    if not _HANGUL_NAME.fullmatch(s):
+        return name
+    if len(s) == 2:
+        return s[0] + mark
+    return s[0] + mark * (len(s) - 2) + s[-1]
+
+
 def _group_key(name):
     """고객명이 완전히 같은 객실끼리만 단체로 본다.
     '진양그룹-Noah'처럼 단체명 옆에 개인 이름이 있으면 각자 한 줄 (사용자 지시 2026-10-23)"""
@@ -997,6 +1051,11 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
             warnings.append("원본에 '비고'(조식 표시) 열이 없어 조식 대상을 가려내지 못했습니다. 전체를 확인해 주세요.")
         warnings.append("비고에 '조식'/'조포'가 있는 객실만 뽑았습니다('룸온리'는 제외). 비고가 다른 표현이면 알려 주세요.")
 
+    if cfg.get("mask_korean_names", True):
+        for rec in records:
+            if rec.get("guest"):
+                rec["guest"] = mask_korean_name(rec["guest"])
+
     if conv.get("sort_by_room"):  # 단체 줄은 항상 맨 아래
         records.sort(key=lambda rec: (rec.get("_group", False), _room_key(rec)))
 
@@ -1025,7 +1084,8 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
                                conv.get("sum", []), conv.get("number_format", "0"), notes, cash,
                                conv.get("row_height"), template=tpl, font_cfg=conv.get("font"),
                                sum_label=conv.get("sum_label", "계"), sum_label_field=conv.get("sum_label_field"),
-                               drop_trailer=conv.get("drop_trailer", ()))
+                               drop_trailer=conv.get("drop_trailer", ()),
+                               fit_pages=conv.get("fit_pages", cfg.get("fit_pages")))
     return {"output": out_path, "count": len(records), "warnings": warnings, "title": conv["title"]}
 
 
