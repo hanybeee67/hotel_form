@@ -94,7 +94,9 @@ def test_income(cfg, tmp_path):
     assert v[4][6] == "계" and v[4][7] == "=SUM(H3:H4)" and v[4][8] == "=SUM(I3:I4)"
     assert ws["F3"].fill.fgColor.rgb.endswith("FFF2B3")  # 선/후 노란 칸
     dvs = {str(dv.sqref): dv for dv in ws.data_validations.dataValidation}
-    assert dvs["F3:F4"].formula1 == '"선,후"' and dvs["G3:G4"].type == "whole"  # 직접 입력 칸 도움
+    assert dvs["F3:F4"].formula1 == '"선,후"'  # 선/후는 목록에서 고르는 노란 칸
+    assert [v[2][6], v[3][6]] == [1, 1]  # 숙박수 = 출발일 - 도착일 (자동)
+    assert not ws["G3"].fill.fgColor.rgb.endswith("FFF2B3")
     assert ws.page_setup.blackAndWhite  # 노란 칸은 인쇄되지 않게
     assert ws["B3"].font.name == "굴림" and ws["B3"].font.sz == 18 and ws["A1"].font.sz == 28
     assert os.path.basename(res["output"]) == "수입일보 2026-10-22.xlsx"
@@ -374,3 +376,9 @@ def test_income_one_row_per_room(cfg, tmp_path):
     data = [(r[0], r[7]) for r in v[2:] if r[0] and str(r[0]).isdigit()]
     assert data == [("0302", 99000), ("0303", 88000), ("0305", 110000)]  # 0304는 매출 0뿐이라 없음
     assert any("0인 줄" in w for w in res["warnings"]) and any("0305 5,000원" in w for w in res["warnings"])
+
+
+@pytest.mark.parametrize("arr,dep,n", [("2026-10-22", "2026-10-23", 1), ("2026-10-11", "2026-10-23", 12),
+                                       ("2026-10-22", "2026-10-22", 0), ("", "2026-10-23", None), ("2026-10-23", "2026-10-22", None)])
+def test_nights(arr, dep, n):
+    assert cv._nights(arr, dep) == n

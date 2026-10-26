@@ -956,6 +956,17 @@ def mask_korean_name(name, mark="0"):
     return s[0] + mark * (len(s) - 2) + s[-1]
 
 
+def _nights(arrival, departure):
+    """숙박수(박) = 출발일 - 도착일. 날짜가 없거나 출발일이 도착일보다 빠르면 None"""
+    try:
+        a = dt.datetime.strptime(str(arrival)[:10], "%Y-%m-%d").date()
+        d = dt.datetime.strptime(str(departure)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    n = (d - a).days
+    return n if n >= 0 else None
+
+
 def _income_one_row_per_room(records, warnings):
     """수입일보: 객실마다 룸값이 들어 있는 한 줄만, 매출 0(또는 빈칸) 줄은 뺀다 (사용자 지시 2026-10-26).
     한 객실에 금액 줄이 여러 개면 매출구분이 ROOM인 줄 → 금액이 큰 줄을 남기고, 뺀 줄은 작업 기록에 알린다."""
@@ -1028,6 +1039,13 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
     cash = None
 
     if kind == "income":
+        bad = []
+        for rec in records:  # 숙박수 = 출발일 - 도착일 (사용자 지시 2026-10-26)
+            rec["nights"] = _nights(rec.get("arrival"), rec.get("departure"))
+            if rec["nights"] is None:
+                bad.append(rec.get("room"))
+        if bad:
+            warnings.append("도착일·출발일을 알 수 없어 숙박수를 비워 둔 객실(노란 칸): " + ", ".join(sorted(set(bad))))
         if conv.get("one_row_per_room"):
             records = _income_one_row_per_room(records, warnings)
         warnings.insert(0, "매출 열은 ERP의 '매출'(부가세 포함 금액)로 채웠습니다.")

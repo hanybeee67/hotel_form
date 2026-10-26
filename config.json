@@ -41,7 +41,7 @@
         {"header": "도착일",   "field": "arrival",   "width": 24.83},
         {"header": "출발일",   "field": "departure", "width": 24.83},
         {"header": "선/후",    "field": null,        "width": 16.83, "choices": ["선", "후"]},
-        {"header": "숙박수",   "field": null,        "width": 13.83, "input": "int"},
+        {"header": "숙박수",   "field": "nights",    "width": 13.83, "fill_if_empty": true},
         {"header": "매출",     "field": "sales",     "width": 24.83},
         {"header": "누계",     "formula_of": "sales", "width": 24.83}
       ],
