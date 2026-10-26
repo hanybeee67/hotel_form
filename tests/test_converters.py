@@ -264,3 +264,24 @@ def test_output_folder_is_program_folder(cfg, tmp_path, monkeypatch):
     assert cv.default_out_dir(str(tmp_path / "다운로드" / "erp.xlsx"), cfg) == str(prog / "마감결과")
     assert cv.default_out_dir(None, {**cfg, "output_dir": "결과모음"}) == str(prog / "결과모음")
     assert cv.default_out_dir(None, {**cfg, "output_dir": str(tmp_path / "X")}) == str(tmp_path / "X")
+
+
+def test_unwritable_program_folder_falls_back(cfg, tmp_path, monkeypatch):
+    """공용폴더처럼 프로그램 폴더에 쓸 수 없으면 내 PC 폴더(문서\\마감결과 등)에 저장하고 알려 준다."""
+    alt = tmp_path / "문서" / "마감결과"
+    real = cv._can_write
+    monkeypatch.setattr(cv, "_can_write", lambda folder: False if "공용" in str(folder) else real(folder))
+    monkeypatch.setattr(cv, "fallback_dir", lambda: str(alt))
+    src = _xlsx(tmp_path / "후불.xlsx", CREDIT)
+    res = cv.convert_file("credit", src, str(tmp_path / "공용" / "한희" / "마감결과"), BDATE, cfg)
+    assert os.path.dirname(res["output"]) == str(alt) and os.path.exists(res["output"])
+    assert any("권한" in w for w in res["warnings"])
+
+
+def test_error_log(tmp_path, monkeypatch):
+    monkeypatch.setattr(cv, "app_dir", lambda: str(tmp_path))
+    try:
+        raise ValueError("시험 오류")
+    except ValueError:
+        path = cv.write_error_log("시험")
+    assert path and "ValueError" in open(path, encoding="utf-8").read()

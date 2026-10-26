@@ -1011,7 +1011,9 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
     fname = conv["file_pattern"].format(date=shown.strftime("%Y-%m-%d"), m=shown.month, d=shown.day)
     fname = re.sub(r'[\\/:*?"<>|]', "-", fname)
 
-    os.makedirs(out_dir, exist_ok=True)
+    out_dir, moved = writable_out_dir(out_dir)
+    if moved:
+        warnings.append(f"프로그램 폴더에 저장할 권한이 없어 '{out_dir}' 에 저장했습니다.")
     out_path = os.path.join(out_dir, f"{fname}.xlsx")
     if unique:
         out_path = unique_path(out_path)
@@ -1045,6 +1047,55 @@ def detect_type(path, cfg=None):
         if sig > 0 and (sig, score) > best:
             best, best_key = (sig, score), key
     return best_key
+
+
+def _can_write(folder):
+    try:
+        os.makedirs(folder, exist_ok=True)
+        probe = os.path.join(folder, ".쓰기확인.tmp")
+        with open(probe, "w", encoding="utf-8") as f:
+            f.write("ok")
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
+
+def fallback_dir():
+    """프로그램 폴더(공용폴더 등)에 쓸 수 없을 때 쓰는 내 PC 폴더: 문서\마감결과 → 바탕 화면\마감결과 → 임시 폴더"""
+    home = os.path.expanduser("~")
+    for base in (os.path.join(home, "Documents"), os.path.join(home, "문서"), os.path.join(home, "Desktop"),
+                 os.environ.get("TEMP") or os.environ.get("TMP") or home):
+        if base and os.path.isdir(base):
+            return os.path.join(base, "마감결과")
+    return os.path.join(home, "마감결과")
+
+
+def writable_out_dir(folder):
+    """결과 폴더에 실제로 쓸 수 있는지 확인하고, 안 되면 내 PC 폴더로 바꾼다. 반환: (폴더, 바꿨는지)"""
+    if _can_write(folder):
+        return folder, False
+    alt = fallback_dir()
+    if _can_write(alt):
+        return alt, True
+    raise ConversionError(f"결과를 저장할 폴더를 만들 수 없습니다.\n{folder}\n폴더 권한을 확인하거나 프로그램을 바탕화면에 복사해 실행해 주세요.")
+
+
+def write_error_log(text):
+    """예상치 못한 오류 내용을 '오류기록.txt'에 남긴다 (프로그램 폴더 → 안 되면 내 PC 폴더). 반환: 파일 경로 또는 None"""
+    import traceback
+    stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    body = f"[{stamp}] {text}\n{traceback.format_exc()}\n"
+    for folder in (app_dir(), fallback_dir()):
+        try:
+            os.makedirs(folder, exist_ok=True)
+            path = os.path.join(folder, "오류기록.txt")
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(body)
+            return path
+        except OSError:
+            continue
+    return None
 
 
 def default_out_dir(src_path=None, cfg=None):

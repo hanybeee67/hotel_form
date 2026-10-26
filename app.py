@@ -326,7 +326,9 @@ class App(tk.Tk):
                 except cv.ConversionError as e:
                     self.jobs.put(("err", kind, path, str(e)))
                 except Exception as e:  # 예상치 못한 오류도 프로그램이 꺼지지 않도록
-                    self.jobs.put(("err", kind, path, f"예상치 못한 오류: {type(e).__name__}: {e}"))
+                    log = cv.write_error_log(f"변환 오류 [{kind}] {path}")
+                    self.jobs.put(("err", kind, path, f"예상치 못한 오류: {type(e).__name__}: {e}"
+                                   + (f"\n오류 내용이 저장된 파일: {log}" if log else "")))
             self.jobs.put(("done", None, None, None))
 
         self._summary = {"ok": 0, "fail": 0}
@@ -400,12 +402,14 @@ class App(tk.Tk):
 
 
 def main():
-    enable_dpi_awareness()
     try:
+        enable_dpi_awareness()
         App().mainloop()
-    except Exception as e:  # 마지막 안전망: 창이 그냥 사라지지 않게 안내
+    except Exception as e:  # 마지막 안전망: 창이 그냥 사라지지 않게 안내하고 오류 내용을 파일로 남긴다
+        log = cv.write_error_log("프로그램 실행 오류")
         try:
-            messagebox.showerror("오류", f"프로그램 실행 중 오류가 발생했습니다.\n{type(e).__name__}: {e}")
+            messagebox.showerror("오류", f"프로그램 실행 중 오류가 발생했습니다.\n{type(e).__name__}: {e}"
+                                 + (f"\n\n오류 내용이 저장된 파일:\n{log}" if log else ""))
         except Exception:
             pass
 
