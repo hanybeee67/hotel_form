@@ -334,6 +334,8 @@ def test_many_rows_fit_two_a4_pages(cfg, tmp_path, monkeypatch):
 @pytest.mark.parametrize("remark,ok,pax", [
     ("1인 조포", True, 1), ("2인 조식 포함", True, 2), ("조식포함", True, None), ("조식 2인", True, 2),
     ("2인실 1인 조포", True, 1), ("조식추가 1명", True, 1), ("B/F 포함", True, None),
+    ("조식 포함\n\n현장 결제\n\n2인 1실 조식 추가 비용 13,000원", True, None),  # 추가요금 안내의 '2인'은 인원 아님
+    ("룸온니\n\n대외후불", False, None), ("가예약\n\n조식 포함\n\n현장 결제", True, None),
     ("룸온리", False, None), ("룸 온리", False, None), ("RO", False, None), ("Room Only", False, None),
     ("조식불포함", False, None), ("조식 미포함", False, None), ("조식X", False, None), ("조식 없음", False, None),
     ("노조식", False, None), ("", False, None), ("늦은 체크인", False, None),

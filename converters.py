@@ -927,10 +927,12 @@ def _bf_people(remark, conv):
     if re.search(conv["bf_exclude_regex"], t, re.I):
         return False, None, "룸온리·조식 불포함"
     if re.search(conv["bf_include_regex"], t, re.I):
-        # 인원: '1인 조포', '2인 조식 포함', '조식 2인', '조식2명' → 조식 바로 앞뒤의 숫자. 없으면 'N인'(단 'N인실'은 객실 종류라 제외)
+        # 인원: '1인 조포', '2인 조식 포함', '조식 2인', '조식2명' → 조식 바로 앞뒤의 숫자만 쓴다.
+        # 비고의 다른 'N인'은 세지 않는다: '2인 1실 조식 추가 비용 13,000원'은 추가요금 안내이지 조식 인원이 아님
+        # (2026-10-26 실제 IN HOUSE LIST: 이 문구가 있는 16객실을 2명으로 세어 59명 → 규칙 수정 후 실제와 같은 47명)
+        # 숫자가 없으면 호출한 쪽에서 성인+소인 수를 쓴다
         m = (re.search(r"(\d+)\s*(?:인|명)\s*(?:조식|조포|b\s*/?\s*f)", t, re.I)
-             or re.search(r"(?:조식|조포|b\s*/?\s*f)[^\d]{0,6}(\d+)\s*(?:인|명)", t, re.I)
-             or re.search(r"(\d+)\s*(?:인|명)(?!\s*실)", t))
+             or re.search(r"(?:조식|조포|b\s*/?\s*f)[^\d\n]{0,6}(\d+)\s*(?:인|명)", t, re.I))
         return True, (int(m.group(1)) if m else None), "조식 포함"
     return False, None, "조식 표시 없음"
 
