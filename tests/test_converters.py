@@ -310,7 +310,10 @@ def test_names_masked_in_documents(cfg, tmp_path):
     rows = [CREDIT[0], CREDIT[1][:6] + ["홍길동"] + CREDIT[1][7:], CREDIT[2][:6] + ["Kim Minsu"] + CREDIT[2][7:]]
     src = _xlsx(tmp_path / "후불.xlsx", rows)
     _, v = _values(cv.convert_file("credit", src, str(tmp_path / "out"), BDATE, cfg)["output"])
-    assert sorted(r[1] for r in v[2:4]) == ["Kim Minsu", "홍0동"]
+    assert sorted(r[1] for r in v[2:4]) == ["Kim Minsu", "홍길동"]  # 대외후불·수입일보는 이름 그대로 (2026-10-26)
+    bf = [BREAKFAST[0], [1, "가", "", "1인 조포", "홍길동", "0503", 1, 0], [2, "나", "", "1인 조포", "Kim Minsu", "0504", 1, 0]]
+    _, v = _values(cv.convert_file("breakfast", _xlsx(tmp_path / "bf.xlsx", bf), str(tmp_path / "out"), BDATE, cfg)["output"])
+    assert [r[1] for r in v[2:4]] == ["홍0동", "Kim Minsu"]  # 조식명단에만 가운데 0
 
 
 def test_many_rows_fit_two_a4_pages(cfg, tmp_path, monkeypatch):
@@ -358,3 +361,16 @@ def test_breakfast_same_room_counted_once(cfg, tmp_path):
     rooms = [r[0] for r in v[2:] if r[0] and str(r[0]).isdigit()]
     assert rooms == ["0503"]
     assert any("1객실 2명" in w for w in res["warnings"]) and any("한 번만" in w for w in res["warnings"])
+
+
+def test_income_one_row_per_room(cfg, tmp_path):
+    """수입일보: 객실마다 룸값이 있는 한 줄만, 매출 0 줄은 빼기 (2026-10-26)."""
+    def row(room, sales, kind="ROOM"):
+        return [kind, "손님", BDATE, "2026-10-23", "D/T", "회사", room, "", 0, 0, "", "", 1, 0, 0, 0, 0, sales, 0]
+    rows = [INCOME[0], row("0302", 0), row("0302", 99000), row("0303", 88000), row("0303", 0),
+            row("0304", 0), row("0305", 5000, "MINIBAR"), row("0305", 110000)]
+    res = cv.convert_file("income", _xlsx(tmp_path / "수입.xlsx", rows), str(tmp_path / "out"), BDATE, cfg)
+    _, v = _values(res["output"])
+    data = [(r[0], r[7]) for r in v[2:] if r[0] and str(r[0]).isdigit()]
+    assert data == [("0302", 99000), ("0303", 88000), ("0305", 110000)]  # 0304는 매출 0뿐이라 없음
+    assert any("0인 줄" in w for w in res["warnings"]) and any("0305 5,000원" in w for w in res["warnings"])

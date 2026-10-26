@@ -956,6 +956,33 @@ def mask_korean_name(name, mark="0"):
     return s[0] + mark * (len(s) - 2) + s[-1]
 
 
+def _income_one_row_per_room(records, warnings):
+    """수입일보: 객실마다 룸값이 들어 있는 한 줄만, 매출 0(또는 빈칸) 줄은 뺀다 (사용자 지시 2026-10-26).
+    한 객실에 금액 줄이 여러 개면 매출구분이 ROOM인 줄 → 금액이 큰 줄을 남기고, 뺀 줄은 작업 기록에 알린다."""
+    zero = [r for r in records if not (r.get("sales") or 0)]
+    kept = {}
+    dropped = []
+    for rec in records:
+        if not (rec.get("sales") or 0):
+            continue
+        room = rec.get("room")
+        cur = kept.get(room)
+        rank = lambda r: (norm(r.get("sales_kind")) == "room", r.get("sales") or 0)
+        if cur is None:
+            kept[room] = rec
+        elif rank(rec) > rank(cur):
+            dropped.append((room, cur.get("sales")))
+            kept[room] = rec
+        else:
+            dropped.append((room, rec.get("sales")))
+    if zero:
+        warnings.append(f"매출이 0인 줄 {len(zero)}건은 뺐습니다.")
+    if dropped:
+        warnings.append("한 객실에 금액 줄이 여러 개라 룸값 한 줄만 남겼습니다 (뺀 금액 확인): "
+                        + ", ".join(f"{room} {amt:,.0f}원" for room, amt in dropped))
+    return list(kept.values())
+
+
 def _group_key(name):
     """고객명이 완전히 같은 객실끼리만 단체로 본다.
     '진양그룹-Noah'처럼 단체명 옆에 개인 이름이 있으면 각자 한 줄 (사용자 지시 2026-10-23)"""
@@ -1001,6 +1028,8 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
     cash = None
 
     if kind == "income":
+        if conv.get("one_row_per_room"):
+            records = _income_one_row_per_room(records, warnings)
         warnings.insert(0, "매출 열은 ERP의 '매출'(부가세 포함 금액)로 채웠습니다.")
         warnings.append("'선/후', '숙박수'는 노란 칸에 직접 입력하세요. '누계'는 우선 매출과 같은 값(수식)으로 채워져 있습니다.")
 
@@ -1077,7 +1106,7 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
             warnings.append("원본에 '비고'(조식 표시) 열이 없어 조식 대상을 가려내지 못했습니다. 전체를 확인해 주세요.")
         warnings.append("비고에 '조식 포함/조포'가 있는 객실만 뽑았습니다('룸온리'·'조식불포함'·'조식X' 등은 제외). 비고가 다른 표현이면 알려 주세요.")
 
-    if cfg.get("mask_korean_names", True):
+    if cfg.get("mask_korean_names", True) and conv.get("mask_names"):  # 조식명단에만 (사용자 지시 2026-10-26)
         for rec in records:
             if rec.get("guest"):
                 rec["guest"] = mask_korean_name(rec["guest"])
