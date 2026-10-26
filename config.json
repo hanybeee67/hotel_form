@@ -154,7 +154,7 @@
       "require_room": true,
       "room_format": "pad4",
       "sort_by_room": true,
-      "group_rows": true,
+      "group_rows": false,
       "group_min_rooms": 2,
       "group_room_label": "단체",
       "bf_include_regex": "조식|조포|b/?f|breakfast",
