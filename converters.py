@@ -1025,17 +1025,31 @@ def _bf_people(remark, conv):
 
 _HANGUL_NAME = re.compile(r"[가-힣]{2,4}")
 _ERP_MASKED = re.compile(r"[가-힣][*＊]+[가-힣]?|[가-힣]{2}[*＊]+[가-힣]?")
+# 4글자 한국 이름은 드묾 → 두 글자 성(남궁·황보 …)으로 시작할 때만 이름으로 본다 (2026-10-27: '씨티소재'가 '씨00재'로 가려짐)
+_TWO_CHAR_SURNAMES = ("남궁", "황보", "제갈", "선우", "독고", "사공", "서문", "동방", "어금", "망절", "강전", "소봉")
+# 2·3글자라도 회사·단체를 뜻하는 말이 들어 있으면 이름이 아님
+_COMPANY_WORDS = re.compile(r"소재|그룹|상사|산업|건설|전자|물산|화학|제약|은행|증권|보험|여행|투어|항공|호텔|학교|대학|"
+                            r"교회|협회|공사|회사|기업|재단|센터|병원|통상|무역|기획|개발|디자인|엔지|테크|코리아|"
+                            r"유통|식품|컴퍼니|주식|유한|단체|팀$|시청|구청|군청|경찰|소방|부대")
+
+
+def is_korean_person_name(name):
+    """한국 사람 이름으로 볼 만한지: 3글자(대부분) · 2글자(외자) · 4글자는 두 글자 성일 때만. 회사 이름은 제외."""
+    s = (name or "").strip()
+    if not _HANGUL_NAME.fullmatch(s) or _COMPANY_WORDS.search(s):
+        return False
+    return len(s) < 4 or s.startswith(_TWO_CHAR_SURNAMES)
 
 
 def mask_korean_name(name, mark="0"):
     """개인정보 보호 (사용자 지시 2026-10-26): 한국인 이름만 가운데 글자를 0으로.
-    3자 홍길동→홍0동, 외자 2자 김철→김0, 4자 남궁민수→남00수.
-    외국인 이름·영문 섞인 이름(진양그룹-Noah)·5자 이상(단체명 등)은 그대로.
+    3자 홍길동→홍0동, 외자 2자 김철→김0, 4자는 두 글자 성만 남궁민수→남00수.
+    회사·단체 이름(씨티소재, 삼성전자), 외국인 이름·영문 섞인 이름(진양그룹-Noah)·5자 이상은 그대로 (2026-10-27).
     ERP가 이미 *로 가린 이름(정*영)은 *를 0으로 바꿔 표기를 통일."""
     s = (name or "").strip()
     if _ERP_MASKED.fullmatch(s):
         return re.sub(r"[*＊]", mark, s)
-    if not _HANGUL_NAME.fullmatch(s):
+    if not is_korean_person_name(s):
         return name
     if len(s) == 2:
         return s[0] + mark
@@ -1247,6 +1261,184 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
                                fit_pages=conv.get("fit_pages", cfg.get("fit_pages")),
                                fill_pages=conv.get("fill_pages", False), width_px=conv.get("width_px"))
     return {"output": out_path, "count": len(records), "warnings": warnings, "title": conv["title"]}
+
+
+# ---------------------------------------------------------------- 조식 인원수 (내일 아침)
+def _bf_rows(conv, bf_conv, path, what):
+    """원본 → 조식 대상 레코드 (객실번호 범위 밖 제외, 비고로 조식 판단, 인원 채움)"""
+    records, warnings, mapped = _extract(conv, read_table(path))
+    has_col = "breakfast" in mapped and any(r.get("breakfast") not in ("", None) for r in records)
+    for rec in records:
+        if has_col:
+            rec["_bf"], n, rec["_why"] = _is_breakfast(rec.get("breakfast"), bf_conv["no_breakfast_values"]), None, "조식 열"
+        else:
+            rec["_bf"], n, rec["_why"] = _bf_people(rec.get("remark"), bf_conv)
+        rec["_guess"] = False
+        if n is not None:
+            rec["pax"] = n
+        elif rec.get("pax") is None:
+            a, c = rec.get("adults"), rec.get("children")
+            if a is not None or c is not None:
+                rec["pax"] = (a or 0) + (c or 0)
+                rec["_guess"] = True
+    if "remark" not in mapped and not has_col:
+        warnings.append(f"{what}에 '비고'(조식 표시) 열이 없어 조식 대상을 가려내지 못했습니다.")
+    return records, [f"[{what}] " + w for w in warnings], mapped
+
+
+def _status_in(rec, words):
+    st = norm(rec.get("status"))
+    return bool(st) and any(norm(w) in st for w in words)
+
+
+def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None):
+    """내일 아침 조식 인원 = 투숙 중(IN HOUSE LIST, 오늘 밤 묵는 객실) + 오늘 도착 예정(객실 예약 리스트, 아직 체크인 전).
+    저녁 8시 보고 때 미체크인 손님이 IN HOUSE LIST에 없어 빠지던 문제 (사용자 요청 2026-10-27).
+    같은 손님이 두 파일에 다 있으면(이미 체크인) 한 번만 센다: 예약 상태 '투숙' · 같은 예약번호 · 같은 객실 · 같은 이름+도착일.
+    반환: {'output', 'count'(객실), 'total'(명), 'inhouse', 'arrivals', 'warnings', 'title', 'bf_date'}"""
+    cfg = cfg or load_config()
+    conv = dict(cfg["breakfast_count"])
+    bf_conv = cfg["converters"]["breakfast"]
+    conv.setdefault("room_range", cfg.get("valid_rooms"))
+    bdate = _parse_date(business_date)
+    bf_date = bdate + dt.timedelta(days=1)
+    today_s, bf_s = bdate.strftime("%Y-%m-%d"), bf_date.strftime("%Y-%m-%d")
+    warnings = []
+
+    # 1) 투숙 중: 오늘 밤 묵는 객실 (출발일이 내일 이후). 오늘 출발인데 아직 남은 손님은 내일 조식 없음
+    ih_conv = dict(conv, required=["room"], require_room=True)
+    ih, w, _ = _bf_rows(ih_conv, bf_conv, inhouse_path, "IN HOUSE LIST")
+    warnings += w
+    leaving = [r for r in ih if r.get("departure") and r["departure"] <= today_s]
+    ih = [r for r in ih if r not in leaving]
+    if leaving:
+        warnings.append(f"오늘 출발(내일 조식 없음)이라 뺀 투숙 객실 {len(set(r['room'] for r in leaving))}개")
+    by_room = {}
+    for r in ih:
+        if r["room"] in by_room:
+            prev = by_room[r["room"]]
+            prev["_bf"] = prev["_bf"] or r["_bf"]
+            if r["_bf"] and (r.get("pax") or 0) > (prev.get("pax") or 0):
+                prev["pax"] = r["pax"]
+            continue
+        by_room[r["room"]] = r
+    ih_all = list(by_room.values())
+
+    # 2) 오늘 도착 예정 (아직 체크인 전)
+    rv_conv = dict(conv, required=["arrival"], require_room=False)
+    rv, w, rv_mapped = _bf_rows(rv_conv, bf_conv, reserve_path, "객실 예약 리스트")
+    warnings += w
+    ih_rooms = {r["room"] for r in ih_all}
+    ih_resv = {r.get("resv_no") for r in ih_all if r.get("resv_no")}
+    ih_names = {(norm(r.get("guest")), r.get("arrival")) for r in ih_all if r.get("guest")}
+    arrivals, skipped = [], {}
+
+    def skip(why):
+        skipped[why] = skipped.get(why, 0) + 1
+
+    for r in rv:
+        if r.get("arrival") != today_s:
+            skip("오늘 도착이 아님")
+        elif r.get("departure") and r["departure"] <= today_s:
+            skip("당일 출발(대실)")
+        elif _status_in(r, conv["cancel_status"]):
+            skip("취소·노쇼")
+        elif (_status_in(r, conv["checked_in_status"]) or (r.get("resv_no") and r["resv_no"] in ih_resv)
+              or (r.get("room") and r["room"] in ih_rooms)
+              or (r.get("guest") and (norm(r["guest"]), r.get("arrival")) in ih_names)):
+            skip("이미 체크인(IN HOUSE LIST에 있음)")
+        else:
+            arrivals.append(r)
+    if "status" not in rv_mapped:
+        warnings.append("예약 리스트에 '예약상태' 열이 없어 취소·노쇼를 가려내지 못했고, 이미 체크인한 손님은 "
+                        "예약번호·객실번호·이름으로만 가려냈습니다. 취소 건이 섞이지 않았는지 확인해 주세요.")
+
+    # 3) 집계
+    def summary(rows):
+        bf = [r for r in rows if r["_bf"]]
+        return bf, sum(int(r.get("rooms") or 1) if not r.get("room") else 1 for r in bf), \
+            sum(r.get("pax") or 0 for r in bf)
+
+    ih_bf, ih_rooms_n, ih_pax = summary(ih_all)
+    ar_bf, ar_rooms_n, ar_pax = summary(arrivals)
+    total = ih_pax + ar_pax
+    excl = lambda rows: sum(1 for r in rows if not r["_bf"])
+    warnings.insert(0, f"{bf_date:%m/%d} 아침 조식 {total}명 = 투숙 중 {ih_pax}명({ih_rooms_n}객실) "
+                       f"+ 오늘 도착 예정 {ar_pax}명({ar_rooms_n}객실)")
+    warnings.append(f"조식 아님(룸온리·표시 없음): 투숙 {excl(ih_all)}객실, 도착 예정 {excl(arrivals)}건")
+    if skipped:
+        warnings.append("예약 리스트에서 뺀 건: " + ", ".join(f"{k} {v}건" for k, v in skipped.items()))
+    guess = [r.get("room") or r.get("guest") or "?" for r in ih_bf + ar_bf if r["_guess"]]
+    if guess:
+        warnings.append("비고에 조식 인원(N인)이 없어 성인+소인 수로 센 곳 — 확인해 주세요: " + ", ".join(guess))
+    no_pax = [r.get("room") or r.get("guest") or "?" for r in ih_bf + ar_bf if r.get("pax") is None]
+    if no_pax:
+        warnings.append("인원을 알 수 없어 0명으로 센 곳 — 꼭 확인해 주세요: " + ", ".join(no_pax))
+    multi = [r.get("guest") or "?" for r in ar_bf if not r.get("room") and (r.get("rooms") or 1) > 1]
+    if multi:
+        warnings.append("객실 여러 개를 한 줄로 예약한 건(객실 미배정) — 인원이 전체 인원인지 확인해 주세요: " + ", ".join(multi))
+
+    # 4) 확인용 엑셀 (A4 세로 한 장 목록)
+    mask = cfg.get("mask_korean_names", True)
+    lines = [("투숙 중", r) for r in sorted(ih_bf, key=_room_key)] + \
+            [("도착 예정", r) for r in sorted(ar_bf, key=lambda r: (r.get("room") or "9999", r.get("guest") or ""))]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = bf_date.strftime("%m%d")
+    font = lambda size, b=False: Font(name="맑은 고딕", size=size, bold=b)
+    ws.merge_cells("A1:E1")
+    ws["A1"] = f"조식 인원 ({bf_date:%m/%d} 아침)"
+    ws["A1"].font, ws["A1"].alignment = font(20, True), _CENTER
+    ws.row_dimensions[1].height = 40
+    info = [("합계", total, f"{ih_rooms_n + ar_rooms_n}객실"), ("투숙 중 (체크인 완료)", ih_pax, f"{ih_rooms_n}객실"),
+            ("오늘 도착 예정 (체크인 전)", ar_pax, f"{ar_rooms_n}객실")]
+    for i, (k, v, n) in enumerate(info, 2):
+        ws.merge_cells(start_row=i, start_column=1, end_row=i, end_column=2)
+        ws.cell(i, 1, k).font = font(13, True)
+        ws.cell(i, 3, v).font = font(16 if i == 2 else 14, True)
+        ws.cell(i, 4, "명").font = font(12)
+        ws.cell(i, 5, n).font = font(12)
+        for c in range(1, 6):
+            ws.cell(i, c).alignment = _ONE_LINE
+        ws.row_dimensions[i].height = 30
+    hrow = 6
+    for c, h in enumerate(["구분", "객실", "고객명", "인원", "조식 근거"], 1):
+        ws.cell(hrow, c, h).font = font(11, True)
+        ws.cell(hrow, c).alignment = _CENTER
+    r = hrow
+    for kind, rec in lines:
+        r += 1
+        guest = rec.get("guest") or ""
+        vals = [kind, rec.get("room") or "미배정", mask_korean_name(guest) if mask else guest,
+                rec.get("pax"), rec.get("_why", "") + (" · 인원 확인" if rec["_guess"] or rec.get("pax") is None else "")]
+        for c, v in enumerate(vals, 1):
+            cell = ws.cell(r, c, v)
+            cell.font, cell.alignment = font(11), _ONE_LINE
+            if c == 4 and v is None:
+                cell.fill = _BLANK_FILL
+        ws.row_dimensions[r].height = 22
+    for col, w in zip("ABCDE", (16, 14, 30, 8, 24)):
+        ws.column_dimensions[col].width = w
+    _draw_grid(ws, 1, 4, 1, 5)
+    if r > hrow:
+        _draw_grid(ws, hrow, r, 1, 5)
+    else:
+        _draw_grid(ws, hrow, hrow, 1, 5)
+    _fit_a4(ws, hrow)
+    ws.print_area = f"A1:E{max(r, hrow)}"
+
+    fname = re.sub(r'[\\/:*?"<>|]', "-", conv["file_pattern"].format(date=bf_s, m=bf_date.month, d=bf_date.day))
+    out_dir, moved = writable_out_dir(out_dir)
+    if moved:
+        warnings.append(f"프로그램 폴더에 저장할 권한이 없어 '{out_dir}' 에 저장했습니다.")
+    out_path = os.path.join(out_dir, f"{fname}.xlsx")
+    try:
+        _clean_copy(ws).save(out_path)
+        _mark_styles_applied(out_path)
+    except PermissionError:
+        raise ConversionError(f"결과 파일이 엑셀에서 열려 있습니다. 닫은 뒤 다시 시도해 주세요.\n{out_path}")
+    return {"output": out_path, "count": ih_rooms_n + ar_rooms_n, "total": total, "inhouse": ih_pax,
+            "arrivals": ar_pax, "warnings": warnings, "title": conv["title"], "bf_date": bf_s}
 
 
 def detect_type(path, cfg=None):

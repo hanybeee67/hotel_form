@@ -309,6 +309,9 @@ def test_chosen_save_folder_wins(cfg, tmp_path, monkeypatch):
     ("홍길동", "홍0동"), ("김철", "김0"), ("남궁민수", "남00수"), ("정*영", "정0영"),
     ("진양그룹-Noah Raymond", "진양그룹-Noah Raymond"), ("CHRISTOPH", "CHRISTOPH"),
     ("Zhu bao jun / Lin jia hao", "Zhu bao jun / Lin jia hao"), ("코원필오케스트라", "코원필오케스트라"), ("", ""),
+    # 4글자는 두 글자 성일 때만 사람 이름 — 회사 이름은 그대로 (2026-10-27 '씨티소재' → '씨00재' 문제)
+    ("씨티소재", "씨티소재"), ("한빛여행", "한빛여행"), ("삼성전자", "삼성전자"), ("황보영희", "황00희"),
+    ("제갈공명", "제00명"), ("김영희철", "김영희철"), ("대한항공", "대한항공"), ("하나투어", "하나투어"),
 ])
 def test_mask_korean_name(raw, masked):
     assert cv.mask_korean_name(raw) == masked
@@ -444,3 +447,50 @@ def test_breakfast_two_pages_same_size(cfg, tmp_path, monkeypatch, n_rooms):
     page2 = sum(ws.row_dimensions[r].height for r in range(cut + 1, last + 1))
     assert abs(page1 - page2) < 0.5, (page1, page2)
     assert ws.cell(last, 1).value.startswith("조식 명단에")  # 안내 문구가 2쪽 맨 아래
+
+
+# ---------------------------------------------------------------- 조식 인원수 (내일 아침, 2026-10-27)
+INHOUSE = [
+    ["순번", "비고", "고객명", "객실번호", "도착일", "출발일", "인원수[성인]", "인원수[소인]"],
+    [1, "2인 조식 포함", "가상손님A", "0301", "2026-10-21", "2026-10-24", 2, 0],
+    [2, "룸온리", "가상손님B", "0302", "2026-10-22", "2026-10-23", 1, 0],
+    [3, "조포", "가상손님C", "0303", "2026-10-22", "2026-10-23", 2, 1],      # 인원 없음 → 성인+소인 3
+    [4, "1인 조포", "가상손님D", "0304", "2026-10-20", "2026-10-22", 1, 0],  # 오늘 출발 → 내일 조식 없음
+    [5, "1인 조포", "단체", "1030", "2026-10-22", "2026-10-23", 1, 0],      # 가상 객실 → 제외
+]
+RESERVE = [
+    ["예약번호", "예약상태", "고객명", "객실번호", "도착일", "출발일", "객실수", "성인", "소인", "비고"],
+    ["R1", "투숙", "가상손님C", "0303", "2026-10-22", "2026-10-23", 1, 2, 1, "조포"],  # 이미 체크인
+    ["R2", "예약", "가상손님E", "0401", "2026-10-22", "2026-10-24", 1, 2, 0, "2인 조식 포함"],
+    ["R3", "예약", "가상손님F", "", "2026-10-22", "2026-10-23", 1, 1, 0, "1인 조포"],  # 객실 미배정
+    ["R4", "취소", "가상손님G", "", "2026-10-22", "2026-10-23", 1, 2, 0, "2인 조포"],
+    ["R5", "예약", "가상손님H", "", "2026-10-23", "2026-10-24", 1, 2, 0, "2인 조포"],  # 내일 도착
+    ["R6", "예약", "가상손님I", "", "2026-10-22", "2026-10-23", 1, 2, 0, "룸온리"],
+    ["R7", "예약", "가상손님A", "0301", "2026-10-21", "2026-10-24", 1, 2, 0, "2인 조식 포함"],
+]
+
+
+def test_breakfast_count(cfg, tmp_path):
+    """투숙 중 + 오늘 도착 예정(체크인 전)을 합쳐 내일 아침 조식 인원만 센다."""
+    res = cv.breakfast_count(_xlsx(tmp_path / "ih.xlsx", INHOUSE), _xlsx(tmp_path / "rv.xlsx", RESERVE),
+                             str(tmp_path / "out"), BDATE, cfg)
+    assert res["bf_date"] == "2026-10-23"
+    assert res["inhouse"] == 2 + 3          # 0301 2명 + 0303 3명 (0302 룸온리, 0304 오늘 출발, 1030 제외)
+    assert res["arrivals"] == 2 + 1         # R2 2명 + R3 1명 (R1 체크인, R4 취소, R5 내일, R6 룸온리, R7 다른 날 도착)
+    assert res["total"] == 8 and res["count"] == 4
+    assert res["warnings"][0].startswith("10/23 아침 조식 8명")
+    ws, v = _values(res["output"])
+    assert ws["C2"].value == 8
+    kinds = [r[0] for r in v[6:]]
+    assert kinds.count("투숙 중") == 2 and kinds.count("도착 예정") == 2
+    assert "미배정" in [r[1] for r in v[6:]]
+
+
+def test_breakfast_count_no_status_column(cfg, tmp_path):
+    """예약상태 열이 없어도 같은 객실·같은 이름이면 이미 체크인한 손님으로 보고 한 번만 센다."""
+    rv = [[c for i, c in enumerate(r) if i != 1] for r in RESERVE]
+    res = cv.breakfast_count(_xlsx(tmp_path / "ih.xlsx", INHOUSE), _xlsx(tmp_path / "rv.xlsx", rv),
+                             str(tmp_path / "out"), BDATE, cfg)
+    # 상태가 없으니 R4(취소)도 들어감 → 2+1+2
+    assert res["inhouse"] == 5 and res["arrivals"] == 5
+    assert any("예약상태" in w for w in res["warnings"])

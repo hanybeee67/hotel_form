@@ -6,6 +6,30 @@
   "fit_pages": 2,
   "mask_korean_names": true,
   "mask_card_number": true,
+  "breakfast_count": {
+    "_설명": "조식 인원수(내일 아침): IN HOUSE LIST(이미 체크인) + 객실 예약 리스트(오늘 도착, 아직 체크인 전)를 합쳐 인원만 센다 (2026-10-27)",
+    "title": "조식 인원수",
+    "file_pattern": "조식인원 {date}",
+    "source_fields": {
+      "room":      ["객실번호", "객실#", "객실", "룸", "호실", "Room", "Rm"],
+      "guest":     ["고객명", "투숙객명", "투숙객", "성명", "Guest", "Guest Name"],
+      "arrival":   ["도착일", "입실일", "체크인일", "Arrival", "Arr"],
+      "departure": ["출발일", "퇴실일", "체크아웃일", "Departure", "Dep"],
+      "rooms":     ["객실수", "Rooms"],
+      "adults":    ["인원수[성인]", "성인", "Adult", "Adults"],
+      "children":  ["인원수[소인]", "소인", "아동", "Child", "Children"],
+      "pax":       ["인원", "Pax"],
+      "breakfast": ["조식", "조식여부", "조식포함", "B/F", "BF", "Breakfast"],
+      "remark":    ["비고", "메모", "Remark", "Remarks", "Memo"],
+      "status":    ["예약상태", "상태", "진행상태", "Status"],
+      "resv_no":   ["예약번호", "예약#", "예약No", "Resv No", "Reservation No", "Conf No"]
+    },
+    "types": {"adults": "number", "children": "number", "pax": "number", "rooms": "number",
+              "arrival": "date", "departure": "date"},
+    "room_format": "pad4",
+    "checked_in_status": ["투숙", "체크인", "재실", "inhouse", "checkin", "ci"],
+    "cancel_status": ["취소", "cancel", "노쇼", "noshow", "삭제", "대기"]
+  },
   "converters": {
     "income": {
       "title": "수입일보",

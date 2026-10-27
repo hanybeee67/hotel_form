@@ -27,6 +27,10 @@ DOCS = [
     ("breakfast", "조식명단", "비고의 '조식/조포' 객실만 301~713 순서대로 ('룸온리' 제외)\n오늘 날짜 · 맨 아래 인원 합계",
      "영업보고서 → 객실/예약 → Clerk → IN HOUSE LIST"),
 ]
+# 5번: 조식 인원수 — 파일 두 개(IN HOUSE LIST + 객실 예약 리스트)를 합쳐 내일 아침 인원만 센다 (2026-10-27)
+BF_COUNT = ("bf_count", "조식 인원수 (내일 아침)",
+            "체크인한 손님(IN HOUSE LIST) + 오늘 도착 예정 손님(객실 예약 리스트)을 합쳐 인원만 집계 · 저녁 8시 보고용",
+            "IN HOUSE LIST 와 객실 예약 리스트(오늘 도착) 두 파일을 차례로 선택")
 
 # ---------------------------------------------------------------- 디자인
 C = {
@@ -35,7 +39,7 @@ C = {
     "soft": "#EAF1FE", "soft_hover": "#D7E5FD", "ok": "#15803D", "warn": "#B45309", "err": "#B91C1C",
     "ok_bg": "#E8F6EC", "warn_bg": "#FEF3E2", "err_bg": "#FDECEC", "disabled": "#C7CDD8",
 }
-BADGE = {"income": "#2F6FEB", "card": "#7C3AED", "credit": "#0E9F6E", "breakfast": "#E08A00"}
+BADGE = {"income": "#2F6FEB", "card": "#7C3AED", "credit": "#0E9F6E", "breakfast": "#E08A00", "bf_count": "#D9480F"}
 
 if sys.platform.startswith("win"):
     FONT = "맑은 고딕"
@@ -116,8 +120,8 @@ class DocCard(tk.Frame):
 
         tk.Label(body, text=desc, bg=C["card"], fg=C["sub"], font=F(9), justify="left",
                  anchor="w").pack(fill="x", pady=(8, 2))
-        tk.Label(body, text="ERP  " + menu, bg=C["card"], fg="#9AA3B2", font=F(8), anchor="w",
-                 justify="left", wraplength=330).pack(fill="x")
+        tk.Label(body, text=("" if kind == "bf_count" else "ERP  ") + menu, bg=C["card"], fg="#9AA3B2",
+                 font=F(8), anchor="w", justify="left", wraplength=330 if kind != "bf_count" else 700).pack(fill="x")
 
         bottom = tk.Frame(body, bg=C["card"])
         bottom.pack(fill="x", pady=(12, 0))
@@ -148,7 +152,9 @@ class App(tk.Tk):
         self.configure(bg=C["bg"])
         # Windows 화면 배율(125%·150%)에 맞춰 창 크기도 키운다
         k = max(1.0, self.winfo_fpixels("1i") / 96)
-        self.geometry(f"{int(900 * k)}x{int(780 * k)}")
+        # 작은 화면(노트북 768px 등)에서도 아래가 잘리지 않게 화면 높이에 맞춘다
+        h = min(int(900 * k), self.winfo_screenheight() - int(80 * k))
+        self.geometry(f"{int(900 * k)}x{h}")
         self.minsize(int(820 * k), int(700 * k))
         self.last_dir = None
         self.busy = False
@@ -204,6 +210,11 @@ class App(tk.Tk):
             card.grid(row=n // 2, column=n % 2, sticky="nsew", padx=(0 if n % 2 == 0 else 7, 7 if n % 2 == 0 else 0),
                       pady=(0, 14))
             self.cards[kind] = card
+        kind, title, desc, menu = BF_COUNT
+        card = DocCard(grid, len(DOCS) + 1, kind, title, desc, menu, lambda _k: self.run_bf_count(), open_path)
+        card.grid(row=len(DOCS) // 2, column=0, columnspan=2, sticky="nsew", pady=(0, 14))
+        card.button.configure(text="파일 2개 선택")
+        self.cards[kind] = card
 
         # 일괄 변환
         act = tk.Frame(self, bg=C["bg"])
@@ -354,9 +365,21 @@ class App(tk.Tk):
             self._log(f"{name} — 어떤 서류인지 알 수 없습니다. 해당 서류 카드의 '파일 선택'으로 변환해 주세요.", "err")
         elif ev == "ok":
             self._summary["ok"] += 1
-            title = self.cfg["converters"][kind]["title"]
+            title = self._title(kind)
             self.last_dir = os.path.dirname(data["output"])
             self.folder_btn.set_enabled(True)
+            if kind == "bf_count":
+                self._log(f"[{title}] {data['bf_date'][5:].replace('-', '/')} 아침 조식 {data['total']}명 "
+                          f"(투숙 중 {data['inhouse']}명 + 도착 예정 {data['arrivals']}명) → "
+                          f"{os.path.basename(data['output'])}", "ok")
+                for w in data["warnings"][1:]:
+                    self._log("   확인: " + w, "warn")
+                self.cards[kind].set_state("ok", f"조식 {data['total']}명", data["output"])
+                self.after(50, lambda d=data: messagebox.showinfo(
+                    "조식 인원수", f"{d['bf_date'][5:].replace('-', '/')} 아침 조식  {d['total']}명\n\n"
+                    f"투숙 중(체크인 완료)  {d['inhouse']}명\n오늘 도착 예정(체크인 전)  {d['arrivals']}명\n\n"
+                    "자세한 내용은 작업 기록과 결과 엑셀을 확인하세요."))
+                return
             self._log(f"[{title}] {data['count']}건 변환 완료 → {os.path.basename(data['output'])}", "ok")
             for w in data["warnings"]:
                 self._log("   확인: " + w, "warn")
@@ -367,7 +390,7 @@ class App(tk.Tk):
                 self.cards[kind].set_state("ok", f"완료 {data['count']}건", data["output"])
         elif ev == "err":
             self._summary["fail"] += 1
-            title = self.cfg["converters"][kind]["title"]
+            title = self._title(kind)
             self._log(f"[{title}] {name} 변환 실패", "err")
             for line in data.splitlines():
                 self._log("   " + line, "err")
@@ -380,7 +403,44 @@ class App(tk.Tk):
             self._set_busy(False)
             self.status.configure(text=text, fg=C["err"] if fail and not ok else C["sub"])
 
+    def _title(self, kind):
+        if kind == "bf_count":
+            return self.cfg["breakfast_count"]["title"]
+        return self.cfg["converters"][kind]["title"]
+
     # ------------------------------------------------------------ 버튼 동작
+    def run_bf_count(self):
+        """조식 인원수: IN HOUSE LIST → 객실 예약 리스트 순서로 파일 두 개를 고른다."""
+        if self.busy:
+            return
+        ih = filedialog.askopenfilename(title="[조식 인원수] 1/2  IN HOUSE LIST 파일 선택 (이미 체크인한 손님)",
+                                        filetypes=FILETYPES)
+        if not ih:
+            return
+        rv = filedialog.askopenfilename(title="[조식 인원수] 2/2  객실 예약 리스트 파일 선택 (오늘 도착 예정 손님)",
+                                        filetypes=FILETYPES)
+        if not rv:
+            return
+        self._log(f"[조식 인원수] {os.path.basename(ih)} + {os.path.basename(rv)}", "bold")
+        bdate = f"{self.bdate:%Y-%m-%d}"
+        self._set_busy(True, f"조식 인원 집계 중… (영업일자 {bdate}, 내일 아침 조식)")
+        self.cards["bf_count"].set_state("run", "집계 중…")
+
+        def work():
+            try:
+                res = cv.breakfast_count(ih, rv, cv.default_out_dir(ih, self.cfg), bdate, self.cfg)
+                self.jobs.put(("ok", "bf_count", ih, res))
+            except cv.ConversionError as e:
+                self.jobs.put(("err", "bf_count", ih, str(e)))
+            except Exception as e:
+                log = cv.write_error_log(f"조식 인원수 오류 {ih} + {rv}")
+                self.jobs.put(("err", "bf_count", ih, f"예상치 못한 오류: {type(e).__name__}: {e}"
+                               + (f"\n오류 내용이 저장된 파일: {log}" if log else "")))
+            self.jobs.put(("done", None, None, None))
+
+        self._summary = {"ok": 0, "fail": 0}
+        threading.Thread(target=work, daemon=True).start()
+
     def run_single(self, kind):
         if self.busy:
             return
