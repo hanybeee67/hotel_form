@@ -1267,7 +1267,9 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
 def _bf_rows(conv, bf_conv, path, what):
     """원본 → 조식 대상 레코드 (객실번호 범위 밖 제외, 비고로 조식 판단, 인원 채움)"""
     records, warnings, mapped = _extract(conv, read_table(path))
-    has_col = "breakfast" in mapped and any(r.get("breakfast") not in ("", None) for r in records)
+    # 조식 열이 있어도 전부 0·빈칸이면(예: 객실 예약 리스트의 '조식요금[총액]') 쓸모가 없으니 비고로 판단 (2026-10-28 실제 파일)
+    has_col = "breakfast" in mapped and any(_is_breakfast(r.get("breakfast"), bf_conv["no_breakfast_values"])
+                                            for r in records)
     for rec in records:
         if has_col:
             rec["_bf"], n, rec["_why"] = _is_breakfast(rec.get("breakfast"), bf_conv["no_breakfast_values"]), None, "조식 열"

@@ -19,7 +19,6 @@
       "adults":    ["인원수[성인]", "성인", "Adult", "Adults"],
       "children":  ["인원수[소인]", "소인", "아동", "Child", "Children"],
       "pax":       ["인원", "Pax"],
-      "breakfast": ["조식", "조식여부", "조식포함", "B/F", "BF", "Breakfast"],
       "remark":    ["비고", "메모", "Remark", "Remarks", "Memo"],
       "status":    ["예약상태", "상태", "진행상태", "Status"],
       "resv_no":   ["예약번호", "예약#", "예약No", "Resv No", "Reservation No", "Conf No"]

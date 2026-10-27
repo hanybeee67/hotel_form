@@ -494,3 +494,13 @@ def test_breakfast_count_no_status_column(cfg, tmp_path):
     # 상태가 없으니 R4(취소)도 들어감 → 2+1+2
     assert res["inhouse"] == 5 and res["arrivals"] == 5
     assert any("예약상태" in w for w in res["warnings"])
+
+
+def test_breakfast_count_ignores_zero_fee_column(cfg, tmp_path):
+    """실제 객실 예약 리스트(2026-10-28)의 '조식요금[총액]' 열(모두 0)을 조식 여부로 읽어 0명이 되던 문제 → 비고로 판단."""
+    rv = [["Acct#", "객실#", "도착일자", "출발일자", "Adult", "Child", "객실", "투숙객명", "상태", "비고", "조식요금[총액]"],
+          ["A1", "", "2026-10-22", "2026-10-24", 1, 0, 1, "가상손님E", "확정", "1인조포\n\n현장결제예정", 0],
+          ["A2", "", "2026-10-22", "2026-10-23", 1, 0, 1, "가상단체", "확정", "룸온니", 0]]
+    res = cv.breakfast_count(_xlsx(tmp_path / "ih.xlsx", INHOUSE), _xlsx(tmp_path / "rv.xlsx", rv),
+                             str(tmp_path / "out"), BDATE, cfg)
+    assert res["arrivals"] == 1
