@@ -159,6 +159,7 @@
       "sort_by_room": true,
       "mask_names": true,
       "fill_pages": true,
+      "width_px": 8,
       "group_rows": false,
       "group_min_rooms": 2,
       "group_room_label": "단체",

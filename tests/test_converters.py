@@ -413,9 +413,9 @@ def test_breakfast_fills_a4(cfg, tmp_path, monkeypatch, n_rooms, pages):
     ratio = _bf_fill_ratio(ws)
     if n_rooms <= 45:
         assert 0.9 <= ratio <= 1.0, ratio  # 꽉 참 (넘치지 않음)
-    # 가로도 A4 너비에 맞춤: 넉넉한 9px 계산으로도 너비 안, 98% 이상 (2026-10-27 Sign 열 잘림 수정)
+    # 가로도 A4 너비에 맞춤: 넉넉한 width_px 계산으로도 너비 안 (2026-10-27 Sign 열 잘림 수정)
     usable_w = 595 - (ws.page_margins.left + ws.page_margins.right) * 72
-    total_w = sum(cv._col_points(ws.column_dimensions[c].width, cv.SAFE_PX) for c in "ABCDE")
+    total_w = sum(cv._col_points(ws.column_dimensions[c].width, cfg["converters"]["breakfast"]["width_px"]) for c in "ABCDE")
     assert 0.95 * usable_w <= total_w <= usable_w, (total_w, usable_w)
     assert ws["B3"].font.sz < 18 and ws["B2"].font.sz < 18  # 열과 같은 비율로 글자도 줄임
     assert ws.page_setup.scale in (None, 100)

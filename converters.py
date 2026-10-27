@@ -625,8 +625,9 @@ def _col_points(width, px=7):
 
 
 # 호텔 PC 프로그램은 열을 7px 계산보다 넓게 그린다 (2026-10-27 사진: 조식명단 Sign 열이 잘려 4쪽으로 인쇄됨)
-# → 꽉 채우는 조식명단은 넉넉하게 9px로 계산해 가로가 절대 넘치지 않게 한다
-SAFE_PX = 9
+# → 꽉 채우는 조식명단은 넉넉하게 계산해 가로가 넘치지 않게 한다. 9px는 가로 여백이 많이 남아(같은 날 사용자) 8px로.
+# config.json의 breakfast.width_px로 조절: 숫자를 줄이면 표가 가로로 커지고, 늘리면 작아진다
+SAFE_PX = 8
 
 
 def _scale_sheet(ws, last, right, f):
@@ -644,7 +645,7 @@ def _scale_sheet(ws, last, right, f):
             cell.font = font
 
 
-def _fit_pages(ws, hrow, first, last, right, pages, fill=False, min_ratio=0.75):
+def _fit_pages(ws, hrow, first, last, right, pages, fill=False, min_ratio=0.75, width_px=None):
     """A4 'pages'장 안에 들어가도록: 너비는 1장, 세로는 최대 pages장.
     넘치면 글자 크기는 그대로 두고 행 높이(줄 간격)만 필요한 만큼 줄인다 (사용자 지시 2026-10-26).
     fill=True(조식명단, 2026-10-27): 1장 분량이면 1장, 넘치면 2장(최대 pages장)을 **꽉 채우도록** 행 높이를 늘리거나 줄인다.
@@ -659,7 +660,7 @@ def _fit_pages(ws, hrow, first, last, right, pages, fill=False, min_ratio=0.75):
     if fill:
         # 가로도 꽉 차게 (사용자 지시 2026-10-27): 넉넉한 폭 계산으로 A4 너비에 맞게 열 너비·글자 크기를 같이 조절,
         # 배율 100%로 인쇄 → 세로도 이 크기 기준으로 채운다
-        f = max(0.5, min(1.3, usable_w * 0.98 / widths(SAFE_PX)))
+        f = max(0.5, min(1.3, usable_w * 0.98 / widths(width_px or SAFE_PX)))
         _scale_sheet(ws, last, right, f)
         total_w, scale = usable_w, 1.0
     else:
@@ -732,7 +733,7 @@ def _fill_two_equal_pages(ws, first, last, right, usable_h, repeat):
 def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                    number_format="0", notes=None, cash=None, row_height=None,
                    template=None, font_cfg=None, sum_label="계", sum_label_field=None, drop_trailer=(),
-                   fit_pages=None, fill_pages=False):
+                   fit_pages=None, fill_pages=False, width_px=None):
     """template(호텔 양식 경로)가 있으면 양식을 열어 값만 채우고, 없으면 font_cfg로 새로 만든다.
     반환: 경고 목록"""
     if template:
@@ -870,7 +871,7 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
     _fit_a4(ws, hrow)
     if fit_pages:
         _fit_pages(ws, hrow, first, table_end, right, fit_pages, fill=bool(fill_pages),
-                   min_ratio=fill_pages if isinstance(fill_pages, float) else 0.75)
+                   min_ratio=fill_pages if isinstance(fill_pages, float) else 0.75, width_px=width_px)
     if ws.auto_filter.ref and records:
         ws.auto_filter.ref = f"A{hrow}:{get_column_letter(right)}{last}"
     if manual or (cash is not None and cash.get("amount") is None):
@@ -1244,7 +1245,7 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
                                sum_label=conv.get("sum_label", "계"), sum_label_field=conv.get("sum_label_field"),
                                drop_trailer=conv.get("drop_trailer", ()),
                                fit_pages=conv.get("fit_pages", cfg.get("fit_pages")),
-                               fill_pages=conv.get("fill_pages", False))
+                               fill_pages=conv.get("fill_pages", False), width_px=conv.get("width_px"))
     return {"output": out_path, "count": len(records), "warnings": warnings, "title": conv["title"]}
 
 
