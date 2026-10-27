@@ -619,9 +619,29 @@ def _fit_a4(ws, hrow):
     ws.oddFooter.center.text = "&P / &N"
 
 
-def _col_points(width):
-    """엑셀 열 너비(글자 수 단위) → 포인트 (기본 글꼴 최대 숫자 폭 7px 기준)"""
-    return ((width or 8.43) * 7 + 5) * 0.75
+def _col_points(width, px=7):
+    """엑셀 열 너비(글자 수 단위) → 포인트 (기본 글꼴 최대 숫자 폭 px 기준, 보통 7px)"""
+    return ((width or 8.43) * px + 5) * 0.75
+
+
+# 호텔 PC 프로그램은 열을 7px 계산보다 넓게 그린다 (2026-10-27 사진: 조식명단 Sign 열이 잘려 4쪽으로 인쇄됨)
+# → 꽉 채우는 조식명단은 넉넉하게 9px로 계산해 가로가 절대 넘치지 않게 한다
+SAFE_PX = 9
+
+
+def _scale_sheet(ws, last, right, f):
+    """열 너비·글자 크기·행 높이를 같은 비율 f로 줄이거나 키운다 (표 모양은 그대로, 크기만)"""
+    for c in range(1, right + 1):
+        d = ws.column_dimensions[get_column_letter(c)]
+        d.width = round((d.width or 8.43) * f, 2)
+    for r in range(1, last + 1):
+        if ws.row_dimensions[r].height:
+            ws.row_dimensions[r].height = round(ws.row_dimensions[r].height * f, 2)
+        for c in range(1, right + 1):
+            cell = ws.cell(r, c)
+            font = copy(cell.font)
+            font.sz = max(6, round((cell.font.sz or 11) * f * 2) / 2)  # 0.5pt 단위
+            cell.font = font
 
 
 def _fit_pages(ws, hrow, first, last, right, pages, fill=False, min_ratio=0.75):
@@ -634,8 +654,17 @@ def _fit_pages(ws, hrow, first, last, right, pages, fill=False, min_ratio=0.75):
     m = ws.page_margins
     usable_w = page_w - (m.left + m.right) * 72
     usable_h = page_h - (m.top + m.bottom) * 72
-    total_w = sum(_col_points(ws.column_dimensions[get_column_letter(c)].width) for c in range(1, right + 1))
-    scale = min(1.0, usable_w / total_w) if total_w else 1.0
+    widths = lambda px: sum(_col_points(ws.column_dimensions[get_column_letter(c)].width, px)
+                            for c in range(1, right + 1))
+    if fill:
+        # 가로도 꽉 차게 (사용자 지시 2026-10-27): 넉넉한 폭 계산으로 A4 너비에 맞게 열 너비·글자 크기를 같이 조절,
+        # 배율 100%로 인쇄 → 세로도 이 크기 기준으로 채운다
+        f = max(0.5, min(1.3, usable_w * 0.98 / widths(SAFE_PX)))
+        _scale_sheet(ws, last, right, f)
+        total_w, scale = usable_w, 1.0
+    else:
+        total_w = widths(7)
+        scale = min(1.0, usable_w / total_w) if total_w else 1.0
     height = lambda r: ws.row_dimensions[r].height or 15
     repeat = sum(height(r) for r in range(1, hrow + 1))  # 쪽마다 반복되는 제목·머리글
     per_page = usable_h / scale - repeat  # 한 쪽에서 표 본문이 쓸 수 있는 높이
@@ -647,7 +676,7 @@ def _fit_pages(ws, hrow, first, last, right, pages, fill=False, min_ratio=0.75):
         target = n * per_page * 0.97  # 행 단위로 쪽이 나뉘므로 약간 여유를 둔다
     else:
         target = pages * per_page
-    if fill and n == 2 and _fill_two_equal_pages(ws, first, last, right, usable_w, usable_h, total_w, repeat):
+    if fill and n == 2 and _fill_two_equal_pages(ws, first, last, right, usable_h, repeat):
         return
     if body and (fill or body > target):
         k = target / body
@@ -667,14 +696,13 @@ def _row_floor(ws, r, right):
     return size * 1.3 * lines
 
 
-def _fill_two_equal_pages(ws, first, last, right, usable_w, usable_h, total_w, repeat):
+def _fill_two_equal_pages(ws, first, last, right, usable_h, repeat):
     """조식명단 2장 (사용자 지시 2026-10-27: 두 장을 나란히 놓으므로 표 크기가 똑같고 맨 아래 줄이 딱 맞아야 함).
     모든 행을 같은 높이(한 칸)로 만들고, 1쪽 k칸 / 2쪽 k칸이 되도록 수동 쪽 나눔을 넣는다.
     2쪽 마지막 행(안내 문구)은 남는 칸 수만큼 높이를 차지해 두 쪽의 맨 아래 선이 같아진다.
-    '맞춤' 인쇄는 수동 쪽 나눔을 무시하므로 고정 배율로 인쇄한다. 안 되면 False (기존 방식으로)."""
-    scale_pct = max(10, min(100, int(usable_w / total_w * 100 * 0.97)))  # 열 너비 계산 오차 여유 3%
-    scale = scale_pct / 100
-    per_page = (usable_h / scale - repeat) * 0.98  # 쪽마다 표 본문이 쓸 수 있는 높이 (여유 2%)
+    '맞춤' 인쇄는 수동 쪽 나눔을 무시하므로 배율 100%로 인쇄한다(너비는 _scale_sheet가 이미 맞춤). 안 되면 False."""
+    scale_pct = 100
+    per_page = (usable_h - repeat) * 0.98  # 쪽마다 표 본문이 쓸 수 있는 높이 (여유 2%)
     others = last - first  # 마지막 행(안내 문구 또는 합계) 앞까지의 행 수
     floor_other = max(_row_floor(ws, r, right) for r in range(first, last))
     floor_last = _row_floor(ws, last, right)

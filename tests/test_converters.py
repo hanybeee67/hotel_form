@@ -152,7 +152,7 @@ def test_breakfast(cfg, tmp_path):
     assert [r[2] for r in rows] == [2, 2, 1, 1, 1, 1, 2]
     assert not any(r[0] == "단체" for r in v)
     assert not any(r[0] == "1287" for r in v)
-    assert ws["B3"].font.name == "맑은 고딕" and ws["B3"].font.sz == 18
+    assert ws["B3"].font.name == "맑은 고딕" and ws["B3"].font.sz < 18  # A4 너비에 맞게 줄임
 
 
 def test_wrong_file_message(cfg, tmp_path):
@@ -215,12 +215,15 @@ def test_repo_templates(cfg, tmp_path, monkeypatch, kind, data, title_size, body
     res = cv.convert_file(kind, src, str(tmp_path / "out"), BDATE, cfg)
     assert not any("양식 파일" in w for w in res["warnings"])
     ws, v = _values(res["output"])
-    assert ws["A1"].font.name == font and ws["A1"].font.sz == title_size
-    assert ws["B3"].font.name == font and ws["B3"].font.sz == body_size and ws["B3"].font.b
+    # 조식명단은 A4 너비에 맞게 열 너비·글자 크기를 같은 비율로 조절 (2026-10-27), 나머지는 양식 그대로
+    f = ws.column_dimensions["B"].width / tpl.column_dimensions["B"].width if kind == "breakfast" else 1
+    near = lambda a, b: abs(a - b) <= 0.5
+    assert ws["A1"].font.name == font and near(ws["A1"].font.sz, title_size * f)
+    assert ws["B3"].font.name == font and near(ws["B3"].font.sz, body_size * f) and ws["B3"].font.b
     for col in "ABCD":
-        assert ws.column_dimensions[col].width == tpl.column_dimensions[col].width
+        assert abs(ws.column_dimensions[col].width - tpl.column_dimensions[col].width * f) < 0.01
     if kind == "breakfast":  # 조식명단은 A4를 꽉 채우도록 행 높이를 늘린다 (2026-10-27)
-        assert ws.row_dimensions[3].height >= tpl.row_dimensions[3].height
+        assert ws.row_dimensions[3].height >= tpl.row_dimensions[3].height * f
     else:
         assert ws.row_dimensions[3].height == tpl.row_dimensions[3].height
     import datetime as dt
@@ -410,7 +413,12 @@ def test_breakfast_fills_a4(cfg, tmp_path, monkeypatch, n_rooms, pages):
     ratio = _bf_fill_ratio(ws)
     if n_rooms <= 45:
         assert 0.9 <= ratio <= 1.0, ratio  # 꽉 참 (넘치지 않음)
-    assert ws["B3"].font.sz == 18  # 글자 크기는 그대로
+    # 가로도 A4 너비에 맞춤: 넉넉한 9px 계산으로도 너비 안, 98% 이상 (2026-10-27 Sign 열 잘림 수정)
+    usable_w = 595 - (ws.page_margins.left + ws.page_margins.right) * 72
+    total_w = sum(cv._col_points(ws.column_dimensions[c].width, cv.SAFE_PX) for c in "ABCDE")
+    assert 0.95 * usable_w <= total_w <= usable_w, (total_w, usable_w)
+    assert ws["B3"].font.sz < 18 and ws["B2"].font.sz < 18  # 열과 같은 비율로 글자도 줄임
+    assert ws.page_setup.scale in (None, 100)
 
 
 def test_other_documents_not_stretched(cfg, tmp_path, monkeypatch):
@@ -421,7 +429,7 @@ def test_other_documents_not_stretched(cfg, tmp_path, monkeypatch):
     assert ws.row_dimensions[3].height == 39.95
 
 
-@pytest.mark.parametrize("n_rooms", [15, 20, 30, 43])
+@pytest.mark.parametrize("n_rooms", [20, 30, 43, 55])
 def test_breakfast_two_pages_same_size(cfg, tmp_path, monkeypatch, n_rooms):
     """조식명단 2장: 두 장을 나란히 놓으므로 표 크기가 똑같고 맨 아래 줄이 딱 맞아야 한다 (2026-10-27)."""
     monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
