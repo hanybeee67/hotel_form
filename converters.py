@@ -14,6 +14,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.cell.cell import MergedCell
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.worksheet.pagebreak import Break
 
 
 class ConversionError(Exception):
@@ -646,6 +647,8 @@ def _fit_pages(ws, hrow, first, last, right, pages, fill=False, min_ratio=0.75):
         target = n * per_page * 0.97  # 행 단위로 쪽이 나뉘므로 약간 여유를 둔다
     else:
         target = pages * per_page
+    if fill and n == 2 and _fill_two_equal_pages(ws, first, last, right, usable_w, usable_h, total_w, repeat):
+        return
     if body and (fill or body > target):
         k = target / body
         for r in range(first, last + 1):
@@ -655,6 +658,47 @@ def _fit_pages(ws, hrow, first, last, right, pages, fill=False, min_ratio=0.75):
             ws.row_dimensions[r].height = round(min(409, max(floor, height(r) * k)), 2)  # 409 = 엑셀 행 높이 최대
     ps = ws.page_setup
     ps.fitToWidth, ps.fitToHeight = 1, n
+
+
+def _row_floor(ws, r, right):
+    """글자가 잘리지 않는 최소 행 높이"""
+    size = max((ws.cell(r, c).font.sz or 11) for c in range(1, right + 1))
+    lines = max(str(ws.cell(r, c).value or "").count("\n") + 1 for c in range(1, right + 1))
+    return size * 1.3 * lines
+
+
+def _fill_two_equal_pages(ws, first, last, right, usable_w, usable_h, total_w, repeat):
+    """조식명단 2장 (사용자 지시 2026-10-27: 두 장을 나란히 놓으므로 표 크기가 똑같고 맨 아래 줄이 딱 맞아야 함).
+    모든 행을 같은 높이(한 칸)로 만들고, 1쪽 k칸 / 2쪽 k칸이 되도록 수동 쪽 나눔을 넣는다.
+    2쪽 마지막 행(안내 문구)은 남는 칸 수만큼 높이를 차지해 두 쪽의 맨 아래 선이 같아진다.
+    '맞춤' 인쇄는 수동 쪽 나눔을 무시하므로 고정 배율로 인쇄한다. 안 되면 False (기존 방식으로)."""
+    scale_pct = max(10, min(100, int(usable_w / total_w * 100 * 0.97)))  # 열 너비 계산 오차 여유 3%
+    scale = scale_pct / 100
+    per_page = (usable_h / scale - repeat) * 0.98  # 쪽마다 표 본문이 쓸 수 있는 높이 (여유 2%)
+    others = last - first  # 마지막 행(안내 문구 또는 합계) 앞까지의 행 수
+    floor_other = max(_row_floor(ws, r, right) for r in range(first, last))
+    floor_last = _row_floor(ws, last, right)
+    k = max(1, -(-(others + 1) // 2))
+    for _ in range(10):  # 칸 높이 ↔ 마지막 행이 차지할 칸 수가 서로 맞을 때까지
+        h = per_page / k
+        m = max(1, -(-floor_last // h)) if h else 1
+        k_new = max(1, -(-(others + int(m)) // 2))
+        if k_new == k:
+            break
+        k = k_new
+    h = per_page / k
+    if h < floor_other or k > others:  # 2장 안에 안 들어가거나 1쪽을 채울 행이 모자라면 포기
+        return False
+    for r in range(first, last):
+        ws.row_dimensions[r].height = round(h, 2)
+    ws.row_dimensions[last].height = round(h * (2 * k - others), 2)
+    ws.row_breaks.brk = []
+    ws.row_breaks.append(Break(id=first + k - 1))  # 1쪽 = 머리글 + k칸
+    ps = ws.page_setup
+    ps.scale = scale_pct
+    ws.sheet_properties.pageSetUpPr.fitToPage = False
+    ps.fitToWidth, ps.fitToHeight = 1, 2
+    return True
 
 
 def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
@@ -901,7 +945,12 @@ def _clean_copy(ws):
     ps.orientation, ps.paperSize = src.orientation, src.paperSize
     ps.fitToWidth, ps.fitToHeight = src.fitToWidth, src.fitToHeight
     ps.blackAndWhite = src.blackAndWhite
-    out.sheet_properties.pageSetUpPr.fitToPage = True
+    fit = ws.sheet_properties.pageSetUpPr.fitToPage if ws.sheet_properties.pageSetUpPr else True
+    out.sheet_properties.pageSetUpPr.fitToPage = True if fit is None else bool(fit)
+    if src.scale:
+        ps.scale = src.scale
+    for brk in ws.row_breaks.brk:  # 조식명단 2장: 정확히 반으로 나누는 수동 쪽 나눔
+        out.row_breaks.append(Break(id=brk.id))
     for k in ("left", "right", "top", "bottom", "header", "footer"):
         setattr(out.page_margins, k, getattr(ws.page_margins, k))
     out.print_options.horizontalCentered = ws.print_options.horizontalCentered

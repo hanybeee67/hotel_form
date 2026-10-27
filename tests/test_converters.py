@@ -419,3 +419,20 @@ def test_other_documents_not_stretched(cfg, tmp_path, monkeypatch):
     res = cv.convert_file("credit", _xlsx(tmp_path / "c.xlsx", CREDIT), str(tmp_path / "out"), BDATE, cfg)
     ws = load_workbook(res["output"]).active
     assert ws.row_dimensions[3].height == 39.95
+
+
+@pytest.mark.parametrize("n_rooms", [15, 20, 30, 43])
+def test_breakfast_two_pages_same_size(cfg, tmp_path, monkeypatch, n_rooms):
+    """조식명단 2장: 두 장을 나란히 놓으므로 표 크기가 똑같고 맨 아래 줄이 딱 맞아야 한다 (2026-10-27)."""
+    monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
+    rooms = [f"0{f}{n:02d}" for f in range(3, 8) for n in range(1, 14)]
+    rows = [BREAKFAST[0]] + [[i, "가", "", "1인 조포", "손님", rooms[i], 1, 0] for i in range(n_rooms)]
+    res = cv.convert_file("breakfast", _xlsx(tmp_path / "bf.xlsx", rows), str(tmp_path / "out"), BDATE, cfg)
+    ws = load_workbook(res["output"]).active
+    breaks = [b.id for b in ws.row_breaks.brk]
+    assert len(breaks) == 1 and ws.sheet_properties.pageSetUpPr.fitToPage is False and ws.page_setup.scale
+    cut, last = breaks[0], ws.max_row
+    page1 = sum(ws.row_dimensions[r].height for r in range(3, cut + 1))
+    page2 = sum(ws.row_dimensions[r].height for r in range(cut + 1, last + 1))
+    assert abs(page1 - page2) < 0.5, (page1, page2)
+    assert ws.cell(last, 1).value.startswith("조식 명단에")  # 안내 문구가 2쪽 맨 아래
