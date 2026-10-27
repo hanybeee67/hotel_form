@@ -623,10 +623,11 @@ def _col_points(width):
     return ((width or 8.43) * 7 + 5) * 0.75
 
 
-def _fit_pages(ws, hrow, first, last, right, pages):
+def _fit_pages(ws, hrow, first, last, right, pages, fill=False, min_ratio=0.75):
     """A4 'pages'장 안에 들어가도록: 너비는 1장, 세로는 최대 pages장.
     넘치면 글자 크기는 그대로 두고 행 높이(줄 간격)만 필요한 만큼 줄인다 (사용자 지시 2026-10-26).
-    그래도 넘치면 엑셀의 '1쪽 너비 × pages쪽 높이 맞춤'이 마지막으로 축소한다."""
+    fill=True(조식명단, 2026-10-27): 1장 분량이면 1장, 넘치면 2장(최대 pages장)을 **꽉 채우도록** 행 높이를 늘리거나 줄인다.
+    그래도 넘치면 엑셀의 '1쪽 너비 × N쪽 높이 맞춤'이 마지막으로 축소한다."""
     landscape = ws.page_setup.orientation == "landscape"
     page_w, page_h = (842, 595) if landscape else (595, 842)
     m = ws.page_margins
@@ -636,24 +637,30 @@ def _fit_pages(ws, hrow, first, last, right, pages):
     scale = min(1.0, usable_w / total_w) if total_w else 1.0
     height = lambda r: ws.row_dimensions[r].height or 15
     repeat = sum(height(r) for r in range(1, hrow + 1))  # 쪽마다 반복되는 제목·머리글
-    avail = pages * (usable_h / scale - repeat) + repeat
-    need = sum(height(r) for r in range(1, last + 1))
-    if need > avail:
-        body = sum(height(r) for r in range(first, last + 1))
-        k = max(0.0, (avail - repeat)) / body if body else 1.0
+    per_page = usable_h / scale - repeat  # 한 쪽에서 표 본문이 쓸 수 있는 높이
+    body = sum(height(r) for r in range(first, last + 1))
+    n = pages
+    if fill:
+        # 양식 행 높이를 min_ratio(기본 75%, Sign 칸에 서명할 공간)까지 줄여서 들어가면 그 쪽 수로 — 최대 pages장
+        n = next((k for k in range(1, pages + 1) if body * min_ratio <= k * per_page), pages)
+        target = n * per_page * 0.97  # 행 단위로 쪽이 나뉘므로 약간 여유를 둔다
+    else:
+        target = pages * per_page
+    if body and (fill or body > target):
+        k = target / body
         for r in range(first, last + 1):
             size = max((ws.cell(r, c).font.sz or 11) for c in range(1, right + 1))
             lines = max(str(ws.cell(r, c).value or "").count("\n") + 1 for c in range(1, right + 1))
             floor = size * 1.3 * lines  # 글자가 잘리지 않는 최소 높이
-            ws.row_dimensions[r].height = round(max(floor, height(r) * k), 2)
+            ws.row_dimensions[r].height = round(min(409, max(floor, height(r) * k)), 2)  # 409 = 엑셀 행 높이 최대
     ps = ws.page_setup
-    ps.fitToWidth, ps.fitToHeight = 1, pages
+    ps.fitToWidth, ps.fitToHeight = 1, n
 
 
 def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                    number_format="0", notes=None, cash=None, row_height=None,
                    template=None, font_cfg=None, sum_label="계", sum_label_field=None, drop_trailer=(),
-                   fit_pages=None):
+                   fit_pages=None, fill_pages=False):
     """template(호텔 양식 경로)가 있으면 양식을 열어 값만 채우고, 없으면 font_cfg로 새로 만든다.
     반환: 경고 목록"""
     if template:
@@ -790,7 +797,8 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
     ws.print_area = f"A1:{get_column_letter(right)}{r}"
     _fit_a4(ws, hrow)
     if fit_pages:
-        _fit_pages(ws, hrow, first, table_end, right, fit_pages)
+        _fit_pages(ws, hrow, first, table_end, right, fit_pages, fill=bool(fill_pages),
+                   min_ratio=fill_pages if isinstance(fill_pages, float) else 0.75)
     if ws.auto_filter.ref and records:
         ws.auto_filter.ref = f"A{hrow}:{get_column_letter(right)}{last}"
     if manual or (cash is not None and cash.get("amount") is None):
@@ -1158,7 +1166,8 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
                                conv.get("row_height"), template=tpl, font_cfg=conv.get("font"),
                                sum_label=conv.get("sum_label", "계"), sum_label_field=conv.get("sum_label_field"),
                                drop_trailer=conv.get("drop_trailer", ()),
-                               fit_pages=conv.get("fit_pages", cfg.get("fit_pages")))
+                               fit_pages=conv.get("fit_pages", cfg.get("fit_pages")),
+                               fill_pages=conv.get("fill_pages", False))
     return {"output": out_path, "count": len(records), "warnings": warnings, "title": conv["title"]}
 
 

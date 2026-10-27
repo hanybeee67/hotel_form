@@ -219,7 +219,10 @@ def test_repo_templates(cfg, tmp_path, monkeypatch, kind, data, title_size, body
     assert ws["B3"].font.name == font and ws["B3"].font.sz == body_size and ws["B3"].font.b
     for col in "ABCD":
         assert ws.column_dimensions[col].width == tpl.column_dimensions[col].width
-    assert ws.row_dimensions[3].height == tpl.row_dimensions[3].height
+    if kind == "breakfast":  # 조식명단은 A4를 꽉 채우도록 행 높이를 늘린다 (2026-10-27)
+        assert ws.row_dimensions[3].height >= tpl.row_dimensions[3].height
+    else:
+        assert ws.row_dimensions[3].height == tpl.row_dimensions[3].height
     import datetime as dt
     expect = dt.date.today().strftime("%m/%d") if kind == "breakfast" else "10/22"  # 조식은 서류 만드는 날
     assert expect in v[0][0]
@@ -382,3 +385,37 @@ def test_income_one_row_per_room(cfg, tmp_path):
                                        ("2026-10-22", "2026-10-22", 0), ("", "2026-10-23", None), ("2026-10-23", "2026-10-22", None)])
 def test_nights(arr, dep, n):
     assert cv._nights(arr, dep) == n
+
+
+def _bf_fill_ratio(ws):
+    """조식명단 본문이 N쪽 공간을 얼마나 채우는지 (1.0 = 꽉 참)"""
+    m = ws.page_margins
+    total_w = sum(cv._col_points(ws.column_dimensions[c].width) for c in "ABCDE")
+    scale = min(1, (595 - (m.left + m.right) * 72) / total_w)
+    repeat = sum(ws.row_dimensions[r].height for r in (1, 2))
+    per_page = (842 - (m.top + m.bottom) * 72) / scale - repeat
+    body = sum(ws.row_dimensions[r].height or 15 for r in range(3, ws.max_row + 1))
+    return body / (ws.page_setup.fitToHeight * per_page)
+
+
+@pytest.mark.parametrize("n_rooms,pages", [(3, 1), (12, 1), (25, 2), (45, 2), (80, 2)])
+def test_breakfast_fills_a4(cfg, tmp_path, monkeypatch, n_rooms, pages):
+    """조식명단만: 1장 분량이면 1장, 넘치면 2장을 꽉 채운다 (최대 2장, 2026-10-27)."""
+    monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
+    rooms = [f"0{f}{n:02d}" for f in range(3, 8) for n in range(1, 14)]
+    rows = [BREAKFAST[0]] + [[i, "가", "", "1인 조포", f"손님{i}", rooms[i % 65], 1, 0] for i in range(n_rooms)]
+    res = cv.convert_file("breakfast", _xlsx(tmp_path / "bf.xlsx", rows), str(tmp_path / "out"), BDATE, cfg)
+    ws = load_workbook(res["output"]).active
+    assert ws.page_setup.fitToHeight == pages
+    ratio = _bf_fill_ratio(ws)
+    if n_rooms <= 45:
+        assert 0.9 <= ratio <= 1.0, ratio  # 꽉 참 (넘치지 않음)
+    assert ws["B3"].font.sz == 18  # 글자 크기는 그대로
+
+
+def test_other_documents_not_stretched(cfg, tmp_path, monkeypatch):
+    """조식명단 외 서류는 늘리지 않는다 (짧으면 양식 높이 그대로)."""
+    monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
+    res = cv.convert_file("credit", _xlsx(tmp_path / "c.xlsx", CREDIT), str(tmp_path / "out"), BDATE, cfg)
+    ws = load_workbook(res["output"]).active
+    assert ws.row_dimensions[3].height == 39.95

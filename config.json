@@ -158,6 +158,7 @@
       "room_format": "pad4",
       "sort_by_room": true,
       "mask_names": true,
+      "fill_pages": true,
       "group_rows": false,
       "group_min_rooms": 2,
       "group_room_label": "단체",
