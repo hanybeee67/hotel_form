@@ -234,7 +234,8 @@ _TOTAL_WORDS = {"합계", "소계", "총계", "계", "total", "subtotal", "grand
 
 
 def _is_total_row(row):
-    return any(norm(c) in _TOTAL_WORDS for c in row[:4])
+    # 수입일보는 매출구분 칸에 'ROOM 소계', '조식 소계'처럼 적혀 있다 (2026-10-28 실제 파일)
+    return any(norm(c) in _TOTAL_WORDS or norm(c).endswith(("소계", "합계", "총계")) for c in row[:4])
 
 
 def fmt_room(v, mode):
@@ -733,7 +734,7 @@ def _fill_two_equal_pages(ws, first, last, right, usable_h, repeat):
 def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                    number_format="0", notes=None, cash=None, row_height=None,
                    template=None, font_cfg=None, sum_label="계", sum_label_field=None, drop_trailer=(),
-                   fit_pages=None, fill_pages=False, width_px=None):
+                   fit_pages=None, fill_pages=False, width_px=None, running_total=None):
     """template(호텔 양식 경로)가 있으면 양식을 열어 값만 채우고, 없으면 font_cfg로 새로 만든다.
     반환: 경고 목록"""
     if template:
@@ -829,6 +830,19 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
         _foot(r, idx["approval_no"], "계")
         _foot(r, amt, f"=SUM({L}{first}:{L}{last})+{L}{cash_row}")
     elif records and sum_fields:
+        prev_row = None
+        if running_total and running_total["col"] in idx and running_total["of"] in idx:
+            # 수입일보 누계 = 전일 누계 + 오늘 매출 합계 (사용자 지시 2026-10-28). 전일 누계는 노란 칸(자동으로 못 찾으면 직접 입력)
+            r += 1
+            _foot_row(r)
+            prev_row = r
+            _foot(r, idx[running_total["of"]], running_total.get("label", "전일 누계"))
+            prev = running_total.get("prev")
+            _foot(r, idx[running_total["col"]], prev, _BLANK_FILL)
+            if isinstance(prev, (int, float)):
+                ws.cell(r, colmap[idx[running_total["col"]]]).number_format = number_format
+            else:
+                manual = True
         r += 1
         _foot_row(r)
         sum_idx = [idx[f] for f in sum_fields if f in idx]
@@ -842,6 +856,9 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
             for i in sum_idx:
                 L = letter(i)
                 _foot(r, i, f"=SUM({L}{first}:{L}{last})")
+            if prev_row:
+                c_run, c_of = letter(idx[running_total["col"]]), letter(idx[running_total["of"]])
+                _foot(r, idx[running_total["col"]], f"={c_run}{prev_row}+{c_of}{r}")
 
     drop = {norm(x) for x in drop_trailer}
     for cells, height, merges in s.trailer:  # 양식의 표 아래 행(외부식사·안내 문구)을 그대로 붙인다
@@ -1068,30 +1085,66 @@ def _nights(arrival, departure):
 
 
 def _income_one_row_per_room(records, warnings):
-    """수입일보: 객실마다 룸값이 들어 있는 한 줄만, 매출 0(또는 빈칸) 줄은 뺀다 (사용자 지시 2026-10-26).
-    한 객실에 금액 줄이 여러 개면 매출구분이 ROOM인 줄 → 금액이 큰 줄을 남기고, 뺀 줄은 작업 기록에 알린다."""
+    """수입일보: 객실마다 한 줄, 매출 0(또는 빈칸) 줄은 뺀다 (사용자 지시 2026-10-26).
+    한 객실에 매출 줄이 여러 개(ROOM·조식·연회·Extra-Charge …)면 **금액을 모두 더해** 그 객실 한 줄에 넣는다
+    (사용자 지시 2026-10-28: 매출이 잡힌 것은 모두 집계 → 합계가 ERP '계'와 같아야 함). 이름·날짜는 ROOM 줄 것을 쓴다."""
     zero = [r for r in records if not (r.get("sales") or 0)]
-    kept = {}
-    dropped = []
-    for rec in records:
+    kept, extra = {}, {}
+    for n, rec in enumerate(records):
         if not (rec.get("sales") or 0):
             continue
-        room = rec.get("room")
-        cur = kept.get(room)
-        rank = lambda r: (norm(r.get("sales_kind")) == "room", r.get("sales") or 0)
+        key = rec.get("room") or f"_{n}"  # 객실이 없는 매출 줄은 각자 한 줄
+        cur = kept.get(key)
         if cur is None:
-            kept[room] = rec
-        elif rank(rec) > rank(cur):
-            dropped.append((room, cur.get("sales")))
-            kept[room] = rec
-        else:
-            dropped.append((room, rec.get("sales")))
+            kept[key] = dict(rec)
+            continue
+        is_room = lambda r: norm(r.get("sales_kind")) == "room"
+        main, sub = (rec, cur) if is_room(rec) and not is_room(cur) else (cur, rec)
+        merged = dict(main, sales=(cur.get("sales") or 0) + (rec.get("sales") or 0))
+        if main is rec:
+            merged["nights"] = rec.get("nights")
+        kept[key] = merged
+        extra.setdefault(key, []).append((sub.get("sales_kind") or "기타", sub.get("sales")))
     if zero:
         warnings.append(f"매출이 0인 줄 {len(zero)}건은 뺐습니다.")
-    if dropped:
-        warnings.append("한 객실에 금액 줄이 여러 개라 룸값 한 줄만 남겼습니다 (뺀 금액 확인): "
-                        + ", ".join(f"{room} {amt:,.0f}원" for room, amt in dropped))
+    if extra:
+        warnings.append("한 객실에 매출 줄이 여러 개라 금액을 더해 한 줄로 넣었습니다: "
+                        + ", ".join(f"{k} (+" + " +".join(f"{kind} {amt:,.0f}" for kind, amt in v) + ")"
+                                    for k, v in extra.items()))
     return list(kept.values())
+
+
+def prev_running_total(path, label="전일 누계", run_header="누계", of_header="매출"):
+    """어제 만든 수입일보 결과 파일에서 어제의 누계(= 어제 전일 누계 + 어제 매출 합계)를 읽는다. 못 읽으면 None.
+    근무자가 엑셀에서 고친 값(전일 누계·매출)도 그대로 반영된다."""
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        ws = load_workbook(path, data_only=True).active
+    except Exception:
+        return None
+    hrow = run_col = of_col = prev_row = None
+    for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 30)):
+        heads = {norm(c.value): c.column for c in row if c.value is not None}
+        if norm(run_header) in heads and norm(of_header) in heads:
+            hrow, run_col, of_col = row[0].row, heads[norm(run_header)], heads[norm(of_header)]
+            break
+    if hrow is None:
+        return None
+    for r in range(hrow + 1, ws.max_row + 1):
+        if norm(ws.cell(r, of_col).value) == norm(label):
+            prev_row = r
+            break
+    if prev_row is None:  # 예전 방식 파일(전일 누계 줄 없음)은 누계를 알 수 없다
+        return None
+    total = ws.cell(prev_row + 1, run_col).value  # 엑셀이 저장해 둔 계 줄 누계 값
+    if isinstance(total, (int, float)) and not isinstance(total, bool):
+        return total
+    before = to_number(ws.cell(prev_row, run_col).value)
+    if before is None:
+        return None
+    sales = sum(to_number(ws.cell(r, of_col).value) or 0 for r in range(hrow + 1, prev_row))
+    return before + sales
 
 
 def _group_key(name):
@@ -1138,18 +1191,38 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
     notes = []
     cash = None
 
+    running_total = None
     if kind == "income":
         bad = []
+        lo, hi = cfg.get("valid_rooms") or (None, None)
         for rec in records:  # 숙박수 = 출발일 - 도착일 (사용자 지시 2026-10-26)
+            room = rec.get("room") or ""
+            if lo is not None and not (room.isdigit() and lo <= int(room) <= hi):
+                rec["nights"] = "-"  # 가상객실(1030 외부 조식 등)·객실 없는 매출은 숙박이 아님
+                continue
             rec["nights"] = _nights(rec.get("arrival"), rec.get("departure"))
             if rec["nights"] is None:
-                bad.append(rec.get("room"))
+                bad.append(room)
         if bad:
-            warnings.append("도착일·출발일을 알 수 없어 숙박수를 비워 둔 객실(노란 칸): " + ", ".join(sorted(set(bad))))
+            warnings.append("도착일·출발일을 알 수 없어 숙박수를 비워 둔 줄(노란 칸): "
+                            + ", ".join(sorted(set(b or "객실 없음" for b in bad))))
         if conv.get("one_row_per_room"):
             records = _income_one_row_per_room(records, warnings)
+        run_cfg = conv.get("running_total")
+        if run_cfg:
+            prev_date = bdate - dt.timedelta(days=1)
+            prev_name = re.sub(r'[\\/:*?"<>|]', "-", conv["file_pattern"].format(
+                date=prev_date.strftime("%Y-%m-%d"), m=prev_date.month, d=prev_date.day))
+            prev = prev_running_total(os.path.join(writable_out_dir(out_dir)[0], prev_name + ".xlsx"),
+                                      run_cfg.get("label", "전일 누계"))
+            running_total = dict(run_cfg, prev=prev)
+            if prev is None:
+                warnings.append(f"전일({prev_date:%m/%d}) 수입일보 결과 파일에서 누계를 찾지 못했습니다. "
+                                "'전일 누계' 노란 칸에 어제 누계를 직접 입력하면 오늘 누계가 자동 계산됩니다.")
+            else:
+                warnings.append(f"전일 누계 {prev:,.0f}원은 어제({prev_date:%m/%d}) 결과 파일에서 가져왔습니다. 맞는지 확인해 주세요.")
         warnings.insert(0, "매출 열은 ERP의 '매출'(부가세 포함 금액)로 채웠습니다.")
-        warnings.append("'선/후', '숙박수'는 노란 칸에 직접 입력하세요. '누계'는 우선 매출과 같은 값(수식)으로 채워져 있습니다.")
+        warnings.append("'선/후'는 노란 칸에 직접 입력하세요. 계 줄의 누계 = 전일 누계 + 오늘 매출 합계(수식)입니다.")
 
     if kind == "card":
         if conv.get("cash_footer"):
@@ -1259,7 +1332,8 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
                                sum_label=conv.get("sum_label", "계"), sum_label_field=conv.get("sum_label_field"),
                                drop_trailer=conv.get("drop_trailer", ()),
                                fit_pages=conv.get("fit_pages", cfg.get("fit_pages")),
-                               fill_pages=conv.get("fill_pages", False), width_px=conv.get("width_px"))
+                               fill_pages=conv.get("fill_pages", False), width_px=conv.get("width_px"),
+                               running_total=running_total)
     return {"output": out_path, "count": len(records), "warnings": warnings, "title": conv["title"]}
 
 

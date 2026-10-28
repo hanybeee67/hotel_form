@@ -88,27 +88,30 @@ def test_income(cfg, tmp_path):
     res = cv.convert_file("income", src, str(tmp_path / "out"), BDATE, cfg)
     ws, v = _values(res["output"])
     assert v[0][0] == "수 입 일 보 (10/22)"
-    assert [r[0] for r in v[2:4]] == ["0302", "0305"]  # 객실 순 정렬, 앞자리 0 유지
+    assert [r[0] for r in v[2:5]] == ["0302", "0305", "1030"]  # 객실 순 정렬, 앞자리 0 유지
     assert v[2][7] == 88000  # 매출 = 부가세 포함 금액 (NET 아님)
     assert v[2][8] == "=H3"  # 누계 = 매출 (자기 자신을 가리키면 순환 참조)
-    assert v[4][6] == "계" and v[4][7] == "=SUM(H3:H4)" and v[4][8] == "=SUM(I3:I4)"
+    # 표 아래: 전일 누계(노란 칸) → 계 (매출 합계, 누계 = 전일 누계 + 매출 합계) (2026-10-28)
+    assert v[5][7] == "전일 누계" and v[5][8] is None and ws["I6"].fill.fgColor.rgb.endswith("FFF2B3")
+    assert v[6][6] == "계" and v[6][7] == "=SUM(H3:H5)" and v[6][8] == "=I6+H7"
     assert ws["F3"].fill.fgColor.rgb.endswith("FFF2B3")  # 선/후 노란 칸
     dvs = {str(dv.sqref): dv for dv in ws.data_validations.dataValidation}
-    assert dvs["F3:F4"].formula1 == '"선,후"'  # 선/후는 목록에서 고르는 노란 칸
+    assert dvs["F3:F5"].formula1 == '"선,후"'  # 선/후는 목록에서 고르는 노란 칸
     assert [v[2][6], v[3][6]] == [1, 1]  # 숙박수 = 출발일 - 도착일 (자동)
     assert not ws["G3"].fill.fgColor.rgb.endswith("FFF2B3")
     assert ws.page_setup.blackAndWhite  # 노란 칸은 인쇄되지 않게
     assert ws["B3"].font.name == "굴림" and ws["B3"].font.sz == 18 and ws["A1"].font.sz == 28
     assert os.path.basename(res["output"]) == "수입일보 2026-10-22.xlsx"
-    assert not any(r[0] == "1030" for r in v)  # 객실 범위(301~713) 밖 제외
-    assert any("범위" in w and "1030" in w for w in res["warnings"])
+    # 수입일보는 매출이 잡힌 줄은 객실 범위 밖(1030 외부 조식 등)도 모두 집계 (2026-10-28), 숙박수는 '-'
+    assert v[4][0] == "1030" and v[4][7] == 50000 and v[4][6] == "-"
+    assert not any("범위" in w for w in res["warnings"])
     # 표 전체에 검은 선 (바깥 굵게, 안쪽 가늘게), A4 너비 맞춤
-    for ref in ("A2", "E3", "I5", "B4"):
+    for ref in ("A2", "E3", "I7", "B4"):
         b = ws[ref].border
         assert all(getattr(b, s).style for s in ("left", "right", "top", "bottom")), ref
         assert b.left.color.rgb == "FF000000"  # 불투명 검정
     assert ws["A3"].border.left.style == "medium" and ws["I3"].border.right.style == "medium"
-    assert ws["E5"].border.bottom.style == "medium" and ws["E4"].border.bottom.style == "thin"
+    assert ws["E7"].border.bottom.style == "medium" and ws["E4"].border.bottom.style == "thin"
     # 노란 입력 칸(선/후·숙박수) 둘레는 굵은 선이라 서로 맞닿아도 경계가 보인다
     assert ws["F3"].border.right.style == "medium" and ws["G3"].border.left.style == "medium"
     assert ws["F3"].border.left.style == "medium" and ws["E3"].border.right.style == "medium"
@@ -375,7 +378,7 @@ def test_breakfast_same_room_counted_once(cfg, tmp_path):
 
 
 def test_income_one_row_per_room(cfg, tmp_path):
-    """수입일보: 객실마다 룸값이 있는 한 줄만, 매출 0 줄은 빼기 (2026-10-26)."""
+    """수입일보: 객실마다 한 줄, 매출 0 줄은 빼기 (2026-10-26). 같은 객실의 다른 매출(미니바·조식 등)은 더한다 (2026-10-28)."""
     def row(room, sales, kind="ROOM"):
         return [kind, "손님", BDATE, "2026-10-23", "D/T", "회사", room, "", 0, 0, "", "", 1, 0, 0, 0, 0, sales, 0]
     rows = [INCOME[0], row("0302", 0), row("0302", 99000), row("0303", 88000), row("0303", 0),
@@ -383,8 +386,30 @@ def test_income_one_row_per_room(cfg, tmp_path):
     res = cv.convert_file("income", _xlsx(tmp_path / "수입.xlsx", rows), str(tmp_path / "out"), BDATE, cfg)
     _, v = _values(res["output"])
     data = [(r[0], r[7]) for r in v[2:] if r[0] and str(r[0]).isdigit()]
-    assert data == [("0302", 99000), ("0303", 88000), ("0305", 110000)]  # 0304는 매출 0뿐이라 없음
-    assert any("0인 줄" in w for w in res["warnings"]) and any("0305 5,000원" in w for w in res["warnings"])
+    assert data == [("0302", 99000), ("0303", 88000), ("0305", 115000)]  # 0304는 매출 0뿐이라 없음
+    assert any("0인 줄" in w for w in res["warnings"]) and any("0305 (+MINIBAR 5,000)" in w for w in res["warnings"])
+
+
+def test_income_subtotal_rows_and_running_total(cfg, tmp_path):
+    """실제 수입일보(2026-10-28): 'ROOM 소계' 같은 소계 줄은 빼고, 어제 결과 파일에서 누계를 이어 받는다."""
+    def row(room, sales, kind="ROOM"):
+        return [kind, "손님", "2026-10-22", "2026-10-23", "D/T", "회사", room, "", 0, 0, "", "", 1, 0, 0, 0, 0, sales, 0]
+    day1 = [INCOME[0], row("0301", 100000), row("0302", 50000), ["ROOM 소계"] + [""] * 16 + [150000, 0],
+            row("0302", 13000, "조식"), ["조식 소계"] + [""] * 16 + [13000, 0], ["계"] + [""] * 16 + [163000, 0]]
+    out = tmp_path / "out"
+    res = cv.convert_file("income", _xlsx(tmp_path / "d1.xlsx", day1), str(out), "2026-10-27", cfg)
+    assert not any("원본 합계" in w for w in res["warnings"])  # 소계를 두 번 세지 않음 → ERP 계와 같음
+    wb = load_workbook(res["output"])
+    ws = wb.active
+    r = next(c.row for c in ws["H"] if c.value == "전일 누계")
+    assert ws.cell(r - 1, 8).value == 63000  # 0302 = 50,000 + 조식 13,000
+    ws.cell(r, 9).value = 7_000_000  # 근무자가 전일 누계 입력
+    wb.save(res["output"])
+    res2 = cv.convert_file("income", _xlsx(tmp_path / "d2.xlsx", day1), str(out), "2026-10-28", cfg)
+    ws2, v2 = _values(res2["output"])
+    r2 = next(i for i, row_ in enumerate(v2) if row_[7] == "전일 누계")
+    assert v2[r2][8] == 7_163_000  # 어제 전일 누계 + 어제 매출
+    assert any("7,163,000" in w for w in res2["warnings"])
 
 
 @pytest.mark.parametrize("arr,dep,n", [("2026-10-22", "2026-10-23", 1), ("2026-10-11", "2026-10-23", 12),
