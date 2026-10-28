@@ -21,7 +21,7 @@ DOCS = [
     ("income", "수입일보", "ROOM → Extra · 조식 · 연회 묶음별 계 (마지막 계 = ERP 계)\n숙박수 = 이번 달 묵은 날 · 누계 = 매출×숙박수 · 선/후는 노란 칸",
      "영업보고서 → 마감일보 → 수입일보 → 엑셀전환"),
     ("card", "카드 · 현금영수증 승인내역", "승인 '성공' 건만 · 한벽루 단말기 빈 줄 4개 · 현금영수증 · 계\n(선택) 객실 예약 리스트를 함께 고르면 객실 자동 채움",
-     "객실관리 → 카드결제 → 승인 내역조회 → 엑셀전환"),
+     "① 객실관리 → 카드결제 → 승인 내역조회 → 엑셀전환\n② (선택, 객실 자동 채우기) 객실관리 → 조회 및 출력 → 객실조회"),
     ("credit", "대외후불 리스트", "객실 순 정렬 · 금액 합계\n원본 합계와 자동 대조",
      "영업보고서 → 입금관련 → 대외 후불 리스트"),
     ("breakfast", "조식명단", "비고의 '조식/조포' 객실만 301~713 순서대로 ('룸온리' 제외)\n오늘 날짜 · 맨 아래 인원 합계",
@@ -454,7 +454,7 @@ class App(tk.Tk):
         if kind == "card" and self.cfg["converters"]["card"].get("room_source"):
             # 객실 칸 자동 채우기 (선택): 객실 예약 리스트(상태 CHECK IN)의 Acct# → 객실#
             room_source = filedialog.askopenfilename(
-                title="(선택) 객실 자동 채우기 — 객실 예약 리스트(CHECK IN) 파일. 없으면 [취소]", filetypes=FILETYPES) or None
+                title="(선택) 객실 자동 채우기 — 객실관리 → 조회 및 출력 → 객실조회 파일. 없으면 [취소]", filetypes=FILETYPES) or None
         self._log(f"[{title}] {os.path.basename(path)}"
                   + (f" + 객실 자동 채우기: {os.path.basename(room_source)}" if room_source else ""), "bold")
         self._start([(kind, path)], room_source)
