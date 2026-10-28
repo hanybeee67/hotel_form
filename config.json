@@ -54,9 +54,10 @@
       "room_range": null,
       "require_room": false,
       "room_format": "pad4",
-      "sort_by_room": true,
-      "one_row_per_room": true,
-      "running_total": {"col": "누계", "of": "sales", "label": "전일 누계"},
+      "sort_by_room": false,
+      "_묶음": "호텔 실제 일보(2026-10-28): 매출구분 묶음(ROOM→Extra-Charge→1회용품→조식→연회)마다 계, 묶음 안은 객실 순",
+      "room_kind": "ROOM",
+      "kind_labels": {"Extra-Charge": "EXTRA CHARGE", "1회용품": "EXTRA CHARGE"},
       "check_total": true,
       "number_format": "#,##0",
       "warn_missing": ["guest", "company", "arrival", "departure"],
@@ -66,10 +67,10 @@
         {"header": "거래처",   "field": "company",   "width": 31.83},
         {"header": "도착일",   "field": "arrival",   "width": 24.83},
         {"header": "출발일",   "field": "departure", "width": 24.83},
-        {"header": "선/후",    "field": null,        "width": 16.83, "choices": ["선", "후"]},
+        {"header": "선/후",    "field": null,        "width": 16.83, "choices": ["카.선", "현.선", "후"], "choices_free": true},
         {"header": "숙박수",   "field": "nights",    "width": 13.83, "fill_if_empty": true},
         {"header": "매출",     "field": "sales",     "width": 24.83},
-        {"header": "누계",     "formula_of": "sales", "width": 24.83}
+        {"header": "누계",     "formula_of": "sales", "times": "nights", "width": 24.83}
       ],
       "sum": ["sales", "누계"]
     },
