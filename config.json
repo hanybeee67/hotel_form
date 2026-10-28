@@ -104,6 +104,17 @@
       "cash_footer": true,
       "_한벽루": "한벽루 단말기(연회·당일예약/워크인)는 ERP와 연동 안 됨 → 현금영수증 줄 위에 직접 입력할 노란 빈 줄 (사용자 지시 2026-10-28)",
       "manual_rows": {"count": 4, "label": "한벽루 단말기 승인 건", "note": "한벽루 단말기 (직접 입력)"},
+      "room_source": {
+        "_설명": "객실 칸 자동 채우기: 객실 예약 리스트(상태 CHECK IN)의 Acct# → 객실# (2026-10-28)",
+        "sort_by_room": true,
+        "source_fields": {
+          "acct":   ["Acct#", "Acct", "예약번호"],
+          "room":   ["객실#", "객실번호", "Room"],
+          "daily":  ["일일요금"],
+          "nights": ["일수"],
+          "guest":  ["투숙객명", "고객명"]
+        }
+      },
       "number_format": "#,##0",
       "warn_missing": ["card_no", "biz_no", "acquirer", "merchant_no", "kind", "approval_no"],
       "output": [

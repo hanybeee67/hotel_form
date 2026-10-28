@@ -780,7 +780,9 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
             val = rec.get(f) if f else None
             if val not in ("", None):
                 cell.value = val
-            if (f is None and col.get("fill", True)) or (col.get("fill_if_empty") and val in ("", None)
+            if f in rec.get("_yellow", ()):  # 자동으로 채웠지만 확인이 필요한 칸 (예: 카드 객실 후보가 여러 개)
+                cell.fill = copy(_BLANK_FILL)
+            elif (f is None and col.get("fill", True)) or (col.get("fill_if_empty") and val in ("", None)
                                                           and not rec.get("_no_fill")):
                 cell.fill = copy(_BLANK_FILL)  # 근무자가 직접 입력할 칸
             if isinstance(val, (int, float)):
@@ -1175,7 +1177,7 @@ def _income_sections(records, bdate, conv, warnings):
                 lab = labels.get(key, rec.get("sales_kind"))
                 base = rec.get("guest") or ""
                 if norm(lab) not in norm(base):  # '[[외부 조식]] 가상객실'처럼 이미 구분이 들어 있으면 그대로
-                    if len(base) + len(lab) > 14:  # 실제 일보처럼 '대한전문건설협회 금속지붕' → '대한전문(EXTRA CHARGE)'
+                    if len(base) + len(lab) > 14:  # 실제 일보처럼 '가상건설협회 금속지붕' → '가상건설(EXTRA CHARGE)'
                         base = base[:4]
                     rec["guest"] = f"{base}({lab})"
                 rec["nights"] = None
@@ -1227,7 +1229,52 @@ def _group_breakfast(records, conv):
     return singles + rows, groups
 
 
-def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False):
+def _room_lookup(path, conv):
+    """객실 예약 리스트(상태 CHECK IN = 재실)에서 Acct# → [(객실, 일일요금×일수, 투숙객명)] (카드 객실 자동 채우기, 2026-10-28)"""
+    rcfg = conv["room_source"]
+    records, _, mapped = _extract({"source_fields": rcfg["source_fields"], "required": ["acct", "room"],
+                                   "types": {"daily": "number", "nights": "number"}, "room_format": conv.get("room_format")},
+                                  read_table(path))
+    out = {}
+    for rec in records:
+        if not rec.get("acct") or not rec.get("room"):
+            continue
+        total = (rec.get("daily") or 0) * (rec.get("nights") or 0)
+        out.setdefault(rec["acct"], []).append((rec["room"], total, rec.get("guest") or ""))
+    return out
+
+
+def _fill_card_rooms(records, lookup, warnings):
+    """카드 승인 건의 Acct#로 객실을 채운다. 한 Acct#에 객실이 여러 개면(단체·여러 방 예약)
+    승인금액 = 일일요금×일수인 객실을 고르고, 그래도 모르면 후보를 모두 적고 노란 칸으로 둔다."""
+    filled, ambiguous, missing = 0, [], []
+    for rec in records:
+        acct = rec.get("acct")
+        if not acct or rec.get("room"):
+            continue
+        cands = lookup.get(acct)
+        if not cands:
+            missing.append(f"{acct}({rec.get('amount') or 0:,.0f}원)")
+            continue
+        if len(cands) > 1:
+            exact = [c for c in cands if c[1] and c[1] == rec.get("amount")]
+            if len(exact) == 1:
+                cands = exact
+        if len(cands) == 1:
+            rec["room"] = cands[0][0]
+            filled += 1
+        else:
+            rec["room"] = "/".join(c[0] for c in cands)
+            rec["_yellow"] = ("room",)
+            ambiguous.append(f"{rec['room']} ({rec.get('amount') or 0:,.0f}원)")
+    warnings.append(f"객실 예약 리스트로 객실 {filled}건을 자동으로 채웠습니다. 맞는지 확인해 주세요.")
+    if ambiguous:
+        warnings.append("한 예약에 객실이 여러 개라 정하지 못한 건(노란 칸, 후보 중 하나만 남기세요): " + ", ".join(ambiguous))
+    if missing:
+        warnings.append("예약 리스트에 없는 Acct#(이미 퇴실한 손님·조식 등 — 직접 입력): " + ", ".join(missing))
+
+
+def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False, room_source=None):
     """kind: income | card | credit | breakfast.
     반환: {'output': 경로, 'count': 건수, 'warnings': [...], 'title': 이름}"""
     cfg = cfg or load_config()
@@ -1247,6 +1294,10 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
                         "숙박수 = 이번 달 들어 오늘까지 묵은 날 수, 누계 = 매출 × 숙박수(수식) — 숙박수를 고치면 누계도 바뀝니다.")
 
     if kind == "card":
+        if room_source and conv.get("room_source"):
+            _fill_card_rooms(records, _room_lookup(room_source, conv), warnings)
+            if conv.get("room_source", {}).get("sort_by_room"):
+                records.sort(key=lambda r: (not r.get("room"), _room_key({"room": (r.get("room") or "").split("/")[0]})))
         if conv.get("cash_footer"):
             kws = conv.get("cash_keywords", ["현금"])
             cash_rows = [r for r in records if any(k in (r.get("kind") or "") for k in kws)]
@@ -1269,7 +1320,7 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
             records = records + [{"_manual": True, "_note": manual.get("note", "")} for _ in range(manual["count"])]
             warnings.append(f"아래 노란 빈 줄 {manual['count']}개는 {manual.get('label', 'ERP에 없는 승인 건')}을 "
                             "직접 적는 칸입니다. 계에 자동으로 더해집니다(안 쓰는 줄은 비워 두세요).")
-        if "room" not in mapped:
+        if "room" not in mapped and not room_source:
             warnings.insert(0, "ERP 승인내역에는 객실번호가 없고 Acct#만 있습니다. '객실' 열은 비워 두었으니 "
                                "오른쪽 'Acct#' 열을 참고해 직접 입력해 주세요. (Acct#는 인쇄되지 않습니다)")
 

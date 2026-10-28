@@ -541,3 +541,27 @@ def test_card_manual_rows_for_other_terminal(cfg, tmp_path):
     cash_row, total_row = 3 + manual[-1] + 1, 3 + manual[-1] + 2
     assert v[cash_row - 1][5] == "현금영수증"
     assert v[total_row - 1][7] == f"=SUM(H3:H{cash_row - 1})+H{cash_row}"  # 빈 줄까지 계에 포함
+
+
+def test_card_room_fill_from_reservation_list(cfg, tmp_path):
+    """카드 객실 자동 채우기: 객실 예약 리스트(CHECK IN)의 Acct# → 객실# (2026-10-28).
+    한 Acct#에 객실이 여러 개면 승인금액 = 일일요금×일수인 객실, 그래도 모르면 후보를 모두 적고 노란 칸."""
+    head = CARD[0]
+    def card(acct, amt, no):
+        return [BDATE, no, 0, acct, "카드승인", "1111-xxxx-xxxx-xxxx", 0, 0, amt, amt, "0000000000", "성공",
+                "", "가상카드", "1", "", str(no), ""]
+    cards = [head, card("A1", 198000, 1), card("A2", 210000, 2), card("A2", 250000, 3), card("A3", 440000, 4),
+             card("A9", 130000, 5)]
+    rv = [["NS", "Acct#", "객실#", "도착일자", "일수", "출발일자", "투숙객명", "일일요금", "상태"],
+          [0, "A1", "0307", "2026-10-26", 2, "2026-10-28", "가상A", 99000, "CHECK IN"],
+          [0, "A2", "0501", "2026-10-28", 2, "2026-10-30", "가상B", 105000, "CHECK IN"],
+          [0, "A2", "0708", "2026-10-28", 2, "2026-10-30", "가상B", 125000, "CHECK IN"],
+          [0, "A3", "0301", "2026-10-28", 2, "2026-10-30", "가상C", 110000, "CHECK IN"],
+          [0, "A3", "0310", "2026-10-28", 2, "2026-10-30", "가상C", 110000, "CHECK IN"]]
+    res = cv.convert_file("card", _xlsx(tmp_path / "c.xlsx", cards), str(tmp_path / "out"), BDATE, cfg,
+                          room_source=_xlsx(tmp_path / "rv.xlsx", rv))
+    ws, v = _values(res["output"])
+    rows = [(r[0], r[7]) for r in v[2:7]]
+    assert rows == [("301/310", 440000), ("307", 198000), ("501", 210000), ("708", 250000), (None, 130000)]
+    assert ws["A3"].fill.fgColor.rgb.endswith("FFF2B3") and not ws["A4"].fill.fgColor.rgb.endswith("FFF2B3")
+    assert any("A9" in w for w in res["warnings"]) and any("301/310" in w for w in res["warnings"])

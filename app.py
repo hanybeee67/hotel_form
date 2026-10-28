@@ -20,7 +20,7 @@ FILETYPES = [("엑셀/표 파일", "*.xlsx *.xlsm *.xls *.csv *.htm *.html"), ("
 DOCS = [
     ("income", "수입일보", "ROOM → Extra · 조식 · 연회 묶음별 계 (마지막 계 = ERP 계)\n숙박수 = 이번 달 묵은 날 · 누계 = 매출×숙박수 · 선/후는 노란 칸",
      "영업보고서 → 마감일보 → 수입일보 → 엑셀전환"),
-    ("card", "카드 · 현금영수증 승인내역", "승인 '성공' 건만 · 한벽루 단말기 빈 줄 4개 · 현금영수증 · 계\n객실 칸은 Acct#를 보고 직접 입력",
+    ("card", "카드 · 현금영수증 승인내역", "승인 '성공' 건만 · 한벽루 단말기 빈 줄 4개 · 현금영수증 · 계\n(선택) 객실 예약 리스트를 함께 고르면 객실 자동 채움",
      "객실관리 → 카드결제 → 승인 내역조회 → 엑셀전환"),
     ("credit", "대외후불 리스트", "객실 순 정렬 · 금액 합계\n원본 합계와 자동 대조",
      "영업보고서 → 입금관련 → 대외 후불 리스트"),
@@ -317,8 +317,9 @@ class App(tk.Tk):
         self.configure(cursor="watch" if on else "")
         self.status.configure(text=text or "대기 중", fg=C["accent"] if on else C["sub"])
 
-    def _start(self, jobs):
-        """jobs: [(kind 또는 None, 경로)] — 화면이 멈추지 않도록 별도 스레드에서 변환."""
+    def _start(self, jobs, room_source=None):
+        """jobs: [(kind 또는 None, 경로)] — 화면이 멈추지 않도록 별도 스레드에서 변환.
+        room_source: 카드 객실 자동 채우기용 객실 예약 리스트(선택)"""
         bdate = f"{self.bdate:%Y-%m-%d}"
         unique = len(jobs) > 1
         self._set_busy(True, f"변환 중… (영업일자 {bdate})")
@@ -335,7 +336,8 @@ class App(tk.Tk):
                         continue
                     self.jobs.put(("start", kind, path, None))
                 try:
-                    res = cv.convert_file(kind, path, cv.default_out_dir(path, self.cfg), bdate, self.cfg, unique=unique)
+                    res = cv.convert_file(kind, path, cv.default_out_dir(path, self.cfg), bdate, self.cfg, unique=unique,
+                                          room_source=room_source if kind == "card" else None)
                     self.jobs.put(("ok", kind, path, res))
                 except cv.ConversionError as e:
                     self.jobs.put(("err", kind, path, str(e)))
@@ -446,9 +448,16 @@ class App(tk.Tk):
             return
         title = self.cfg["converters"][kind]["title"]
         path = filedialog.askopenfilename(title=f"[{title}] ERP에서 받은 엑셀 파일 선택", filetypes=FILETYPES)
-        if path:
-            self._log(f"[{title}] {os.path.basename(path)}", "bold")
-            self._start([(kind, path)])
+        if not path:
+            return
+        room_source = None
+        if kind == "card" and self.cfg["converters"]["card"].get("room_source"):
+            # 객실 칸 자동 채우기 (선택): 객실 예약 리스트(상태 CHECK IN)의 Acct# → 객실#
+            room_source = filedialog.askopenfilename(
+                title="(선택) 객실 자동 채우기 — 객실 예약 리스트(CHECK IN) 파일. 없으면 [취소]", filetypes=FILETYPES) or None
+        self._log(f"[{title}] {os.path.basename(path)}"
+                  + (f" + 객실 자동 채우기: {os.path.basename(room_source)}" if room_source else ""), "bold")
+        self._start([(kind, path)], room_source)
 
     def run_all(self):
         if self.busy:
