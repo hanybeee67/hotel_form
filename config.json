@@ -102,6 +102,8 @@
       "include": {"response": ["성공"]},
       "cash_keywords": ["현금"],
       "cash_footer": true,
+      "_한벽루": "한벽루 단말기(연회·당일예약/워크인)는 ERP와 연동 안 됨 → 현금영수증 줄 위에 직접 입력할 노란 빈 줄 (사용자 지시 2026-10-28)",
+      "manual_rows": {"count": 4, "label": "한벽루 단말기 승인 건", "note": "한벽루 단말기 (직접 입력)"},
       "number_format": "#,##0",
       "warn_missing": ["card_no", "biz_no", "acquirer", "merchant_no", "kind", "approval_no"],
       "output": [

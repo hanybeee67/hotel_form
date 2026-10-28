@@ -125,11 +125,11 @@ def test_card(cfg, tmp_path):
     src = _xlsx(tmp_path / "카드.xlsx", CARD)
     res = cv.convert_file("card", src, str(tmp_path / "out"), BDATE, cfg)
     _, v = _values(res["output"])
-    assert len(v) == 5  # 제목, 머리글, 성공 1건, 현금영수증, 계
+    assert len(v) == 9  # 제목, 머리글, 성공 1건, 한벽루 빈 줄 4, 현금영수증, 계
     assert v[2][1] == "1111-XXXX-XXXX-XXXX"
     assert v[2][3] == "가상카드"  # 발급사가 아니라 매입사
-    assert v[3][5] == "현금영수증" and v[3][7] == 11000
-    assert v[4][6] == "계" and v[4][7] == "=SUM(H3:H3)+H4"
+    assert v[7][5] == "현금영수증" and v[7][7] == 11000
+    assert v[8][6] == "계" and v[8][7] == "=SUM(H3:H7)+H8"
     ws = load_workbook(res["output"]).active
     assert ws["A3"].fill.fgColor.rgb.endswith("FFF2B3")  # 객실은 Acct#를 보고 직접 입력하는 노란 칸
 
@@ -527,3 +527,17 @@ def test_breakfast_count_ignores_zero_fee_column(cfg, tmp_path):
     res = cv.breakfast_count(_xlsx(tmp_path / "ih.xlsx", INHOUSE), _xlsx(tmp_path / "rv.xlsx", rv),
                              str(tmp_path / "out"), BDATE, cfg)
     assert res["arrivals"] == 1
+
+
+def test_card_manual_rows_for_other_terminal(cfg, tmp_path):
+    """카드: ERP와 연동 안 되는 한벽루 단말기 승인 건을 적는 노란 빈 줄 4개, 계에 포함. 승인 실패는 제외 (2026-10-28)."""
+    res = cv.convert_file("card", _xlsx(tmp_path / "카드.xlsx", CARD), str(tmp_path / "out"), BDATE, cfg)
+    ws, v = _values(res["output"])
+    data = v[2:]
+    assert [r[1] for r in data[:1]] == ["1111-XXXX-XXXX-XXXX"] and not any(r[5] == "실패" for r in data)
+    manual = [i for i, r in enumerate(data) if r[8] == "한벽루 단말기 (직접 입력)"]
+    assert len(manual) == 4 and all(not any(data[i][:8]) for i in manual)
+    assert ws.cell(3 + manual[0], 8).fill.fgColor.rgb.endswith("FFF2B3")
+    cash_row, total_row = 3 + manual[-1] + 1, 3 + manual[-1] + 2
+    assert v[cash_row - 1][5] == "현금영수증"
+    assert v[total_row - 1][7] == f"=SUM(H3:H{cash_row - 1})+H{cash_row}"  # 빈 줄까지 계에 포함

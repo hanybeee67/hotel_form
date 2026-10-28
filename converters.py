@@ -787,6 +787,15 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                 cell.number_format = fmt
         for c in s.extra_cols:
             _apply(ws.cell(r, c), s.data_st[c])
+        if rec.get("_manual"):  # 카드: ERP에 없는 한벽루 단말기 승인 건을 직접 적는 빈 줄 (2026-10-28)
+            for i, col in enumerate(out_cols):
+                cell = ws.cell(r, colmap[i])
+                if col.get("print", True):
+                    cell.fill = copy(_BLANK_FILL)
+                    if col.get("field") == "amount" or col.get("aliases") and "금액" in col["aliases"]:
+                        cell.number_format = number_format
+                elif rec.get("_note"):
+                    cell.value = rec["_note"]
         nxt = records[n + 1] if n + 1 < len(records) else None
         if "_sec" in rec and nxt is not None and nxt.get("_sec") != rec["_sec"]:
             r += 1  # 묶음 끝 → 계 줄 자리 (서식·수식은 아래에서)
@@ -1255,6 +1264,11 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False)
         for rec in records:
             if rec.get("card_no"):
                 rec["card_no"] = re.sub(r"x", "X", rec["card_no"], flags=re.I) if "x" in rec["card_no"].lower() else rec["card_no"]
+        manual = conv.get("manual_rows") or {}
+        if manual.get("count"):
+            records = records + [{"_manual": True, "_note": manual.get("note", "")} for _ in range(manual["count"])]
+            warnings.append(f"아래 노란 빈 줄 {manual['count']}개는 {manual.get('label', 'ERP에 없는 승인 건')}을 "
+                            "직접 적는 칸입니다. 계에 자동으로 더해집니다(안 쓰는 줄은 비워 두세요).")
         if "room" not in mapped:
             warnings.insert(0, "ERP 승인내역에는 객실번호가 없고 Acct#만 있습니다. '객실' 열은 비워 두었으니 "
                                "오른쪽 'Acct#' 열을 참고해 직접 입력해 주세요. (Acct#는 인쇄되지 않습니다)")
