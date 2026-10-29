@@ -171,6 +171,10 @@ class App(tk.Tk):
         self._log("프로그램을 시작했습니다. 영업일자를 확인한 뒤 서류를 선택하세요.", "sub")
         self.last_dir = cv.default_out_dir(None, self.cfg)
         self._log(f"결과 저장 위치: {self.last_dir}  ('저장 위치 변경'으로 바꿀 수 있습니다)", "sub")
+        names = self.cfg.get("daily", {}).get("names", {})
+        self._log(f"ERP 원본 폴더: {cv.erp_folder(self.cfg)}  — 파일 이름은 "
+                  + ", ".join(f"{v}{self.bdate:%m%d}" for k, v in names.items() if k != "reserve")
+                  + " 처럼 저장 후 [오늘 마감 한 번에]", "sub")
         self.after(100, self._poll)
 
     # ------------------------------------------------------------ 화면 구성
@@ -219,8 +223,12 @@ class App(tk.Tk):
         # 일괄 변환
         act = tk.Frame(self, bg=C["bg"])
         act.pack(fill="x", padx=20)
-        self.all_btn = FlatButton(act, "모든 서류 한 번에 변환  (여러 파일 선택)", self.run_all, size=11, pady=11)
-        self.all_btn.pack(side="left", fill="x", expand=True)
+        # 오늘 마감 한 번에: 바탕화면 ERP원본 폴더의 '수입1029'처럼 이름 붙인 파일을 찾아 모두 변환 (2026-10-29)
+        self.daily_btn = FlatButton(act, "오늘 마감 한 번에  (ERP원본 폴더)", self.run_daily, size=11, pady=11)
+        self.daily_btn.pack(side="left", fill="x", expand=True)
+        self.all_btn = FlatButton(act, "파일 골라서 변환", self.run_all, kind="soft", size=10, pady=11)
+        self.all_btn.pack(side="left", padx=(10, 0))
+        FlatButton(act, "원본 폴더", self.open_erp_folder, kind="soft", size=10, pady=11).pack(side="left", padx=(10, 0))
         self.folder_btn = FlatButton(act, "결과 폴더 열기", self.open_folder, kind="soft", size=10, pady=11)
         self.folder_btn.pack(side="left", padx=(10, 0))
         FlatButton(act, "저장 위치 변경", self.choose_out_dir, kind="soft", size=10, pady=11).pack(
@@ -314,21 +322,23 @@ class App(tk.Tk):
         for card in self.cards.values():
             card.button.set_enabled(not on)
         self.all_btn.set_enabled(not on)
+        self.daily_btn.set_enabled(not on)
         self.configure(cursor="watch" if on else "")
         self.status.configure(text=text or "대기 중", fg=C["accent"] if on else C["sub"])
 
-    def _start(self, jobs, room_source=None):
-        """jobs: [(kind 또는 None, 경로)] — 화면이 멈추지 않도록 별도 스레드에서 변환.
-        room_source: 카드 객실 자동 채우기용 객실 예약 리스트(선택)"""
+    def _start(self, jobs, room_source=None, unique=None):
+        """jobs: [(kind 또는 None, 경로)] 또는 [(kind, 경로, 짝 파일)] — 화면이 멈추지 않도록 별도 스레드에서 변환.
+        짝 파일: 카드 → 객실 자동 채우기용 객실조회, 조식 인원수(bf_count) → 객실 예약 리스트"""
         bdate = f"{self.bdate:%Y-%m-%d}"
-        unique = len(jobs) > 1
+        jobs = [j if len(j) == 3 else (j[0], j[1], room_source) for j in jobs]
+        unique = len(jobs) > 1 if unique is None else unique
         self._set_busy(True, f"변환 중… (영업일자 {bdate})")
-        for kind, _ in jobs:
+        for kind, _, _ in jobs:
             if kind:
                 self.cards[kind].set_state("run", "변환 중…")
 
         def work():
-            for kind, path in jobs:
+            for kind, path, extra in jobs:
                 if kind is None:
                     kind = cv.detect_type(path, self.cfg)
                     if kind is None:
@@ -336,8 +346,11 @@ class App(tk.Tk):
                         continue
                     self.jobs.put(("start", kind, path, None))
                 try:
-                    res = cv.convert_file(kind, path, cv.default_out_dir(path, self.cfg), bdate, self.cfg, unique=unique,
-                                          room_source=room_source if kind == "card" else None)
+                    if kind == "bf_count":
+                        res = cv.breakfast_count(path, extra, cv.default_out_dir(path, self.cfg), bdate, self.cfg)
+                    else:
+                        res = cv.convert_file(kind, path, cv.default_out_dir(path, self.cfg), bdate, self.cfg, unique=unique,
+                                              room_source=extra if kind == "card" else None)
                     self.jobs.put(("ok", kind, path, res))
                 except cv.ConversionError as e:
                     self.jobs.put(("err", kind, path, str(e)))
@@ -431,24 +444,7 @@ class App(tk.Tk):
         if not rv:
             return
         self._log(f"[조식 인원수] {os.path.basename(ih)} + {os.path.basename(rv)}", "bold")
-        bdate = f"{self.bdate:%Y-%m-%d}"
-        self._set_busy(True, f"조식 인원 집계 중… (영업일자 {bdate}, 내일 아침 조식)")
-        self.cards["bf_count"].set_state("run", "집계 중…")
-
-        def work():
-            try:
-                res = cv.breakfast_count(ih, rv, cv.default_out_dir(ih, self.cfg), bdate, self.cfg)
-                self.jobs.put(("ok", "bf_count", ih, res))
-            except cv.ConversionError as e:
-                self.jobs.put(("err", "bf_count", ih, str(e)))
-            except Exception as e:
-                log = cv.write_error_log(f"조식 인원수 오류 {ih} + {rv}")
-                self.jobs.put(("err", "bf_count", ih, f"예상치 못한 오류: {type(e).__name__}: {e}"
-                               + (f"\n오류 내용이 저장된 파일: {log}" if log else "")))
-            self.jobs.put(("done", None, None, None))
-
-        self._summary = {"ok": 0, "fail": 0}
-        threading.Thread(target=work, daemon=True).start()
+        self._start([("bf_count", ih, rv)], unique=False)
 
     def run_single(self, kind):
         if self.busy:
@@ -465,6 +461,41 @@ class App(tk.Tk):
         self._log(f"[{title}] {os.path.basename(path)}"
                   + (f" + 객실 자동 채우기: {os.path.basename(room_source)}" if room_source else ""), "bold")
         self._start([(kind, path)], room_source)
+
+    def run_daily(self):
+        """바탕화면 ERP원본 폴더에서 영업일자(MMDD) 파일을 찾아 모두 변환"""
+        if self.busy:
+            return
+        folder = cv.erp_folder(self.cfg)
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError:
+            pass
+        bdate = f"{self.bdate:%Y-%m-%d}"
+        jobs, notes, found = cv.daily_jobs(folder, bdate, self.cfg)
+        mmdd = f"{self.bdate:%m%d}"
+        self._log(f"오늘 마감 한 번에: {folder}  (영업일자 {bdate} → 파일 이름 뒤 {mmdd})", "bold")
+        for path in found.values():
+            self._log("   찾음: " + os.path.basename(path), "sub")
+        for n in notes:
+            self._log("   " + n, "warn")
+        if not jobs:
+            names = self.cfg.get("daily", {}).get("names", {})
+            messagebox.showwarning("오늘 마감 한 번에",
+                                   f"ERP원본 폴더에 {mmdd} 파일이 없습니다.\n\n{folder}\n\n"
+                                   "ERP에서 엑셀전환한 파일을 이 폴더에 이렇게 저장해 주세요:\n"
+                                   + ", ".join(f"{v}{mmdd}" for k, v in names.items() if k != "reserve")
+                                   + "\n\n영업일자가 맞는지도 확인하세요.")
+            return
+        self._start(jobs, unique=False)
+
+    def open_erp_folder(self):
+        folder = cv.erp_folder(self.cfg)
+        try:
+            os.makedirs(folder, exist_ok=True)
+            open_path(folder)
+        except OSError as e:
+            messagebox.showwarning("ERP원본 폴더", f"폴더를 열 수 없습니다.\n{folder}\n({e})")
 
     def run_all(self):
         if self.busy:

@@ -296,7 +296,8 @@ def test_error_log(tmp_path, monkeypatch):
         raise ValueError("시험 오류")
     except ValueError:
         path = cv.write_error_log("시험")
-    assert path and "ValueError" in open(path, encoding="utf-8").read()
+    with open(path, encoding="utf-8") as f:
+        assert path and "ValueError" in f.read()
 
 
 def test_chosen_save_folder_wins(cfg, tmp_path, monkeypatch):
@@ -607,3 +608,33 @@ def test_pax_sanity_warns_on_big_room(cfg):
     assert not cv._pax_sanity([{"room": "0302", "pax": 35}, {"room": "0303", "pax": 2}], cfg["converters"]["breakfast"], w)
     assert w[0].startswith("⚠ 확인 필요") and "0302(35명)" in w[0]
     assert cv._pax_sanity([{"room": "0303", "pax": 4}], cfg["converters"]["breakfast"], [])
+
+
+def test_find_daily_files(cfg, tmp_path):
+    """오늘 마감 한 번에: ERP원본 폴더의 '약칭+MMDD' 파일 (수입1022, 카드1022 …), 날짜가 다른 파일은 무시 (2026-10-29)."""
+    d = tmp_path / "ERP원본"
+    d.mkdir()
+    _xlsx(d / "수입1022.xlsx", INCOME)
+    _xlsx(d / "수입1021.xlsx", INCOME)
+    _xlsx(d / "카드1022.xlsx", CARD)
+    _xlsx(d / "인하1022.xlsx", INHOUSE)
+    _xlsx(d / "객실 1022.xlsx", RESERVE)
+    (d / "~$수입1022.xlsx").write_bytes(b"")  # 엑셀 임시 파일은 무시
+    jobs, notes, found = cv.daily_jobs(str(d), BDATE, cfg)
+    assert {k: os.path.basename(v) for k, v in found.items()} == {
+        "income": "수입1022.xlsx", "card": "카드1022.xlsx", "inhouse": "인하1022.xlsx", "rooms": "객실 1022.xlsx"}
+    assert [(k, os.path.basename(p), os.path.basename(e) if e else None) for k, p, e in jobs] == [
+        ("income", "수입1022.xlsx", None), ("card", "카드1022.xlsx", "객실 1022.xlsx"),
+        ("bf_count", "인하1022.xlsx", "객실 1022.xlsx")]
+    assert any("대외1022" in n for n in notes)
+
+
+def test_breakfast_count_late_checkin_counted(cfg, tmp_path):
+    """IN HOUSE LIST를 받은 뒤 체크인한 손님(객실조회에는 CHECK IN, IN HOUSE에는 없음)은 투숙 중으로 센다 (2026-10-29)."""
+    rv = [["Acct#", "객실#", "도착일자", "출발일자", "Adult", "Child", "투숙객명", "상태", "비고"],
+          ["A1", "0501", "2026-10-22", "2026-10-24", 1, 0, "가상갑", "CHECK IN", "1인 조포"],
+          ["A2", "0301", "2026-10-21", "2026-10-24", 2, 0, "가상손님A", "CHECK IN", "2인 조식 포함"]]  # IN HOUSE에 있음
+    res = cv.breakfast_count(_xlsx(tmp_path / "ih.xlsx", INHOUSE), _xlsx(tmp_path / "rv.xlsx", rv),
+                             str(tmp_path / "out"), BDATE, cfg)
+    assert res["inhouse"] == 5 + 1 and res["arrivals"] == 0
+    assert any("뒤 체크인한 1객실" in w and "0501" in w for w in res["warnings"])

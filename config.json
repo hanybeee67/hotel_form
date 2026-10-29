@@ -6,6 +6,11 @@
   "fit_pages": 2,
   "mask_korean_names": true,
   "mask_card_number": true,
+  "daily": {
+    "_설명": "오늘 마감 한 번에: 바탕화면 ERP원본 폴더의 '약칭+MMDD' 파일을 찾아 모두 변환 (사용자 지시 2026-10-29). 예약은 없어도 됨(객실로 대신)",
+    "folder": "",
+    "names": {"income": "수입", "card": "카드", "credit": "대외", "inhouse": "인하", "rooms": "객실", "reserve": "예약"}
+  },
   "breakfast_count": {
     "_설명": "조식 인원수(내일 아침): IN HOUSE LIST(이미 체크인) + 객실 예약 리스트(오늘 도착, 아직 체크인 전)를 합쳐 인원만 센다 (2026-10-27)",
     "title": "조식 인원수",

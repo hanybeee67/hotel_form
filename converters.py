@@ -1542,19 +1542,35 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
     def skip(why):
         skipped[why] = skipped.get(why, 0) + 1
 
+    late = {}  # IN HOUSE LIST를 받은 뒤 체크인한 객실 (객실조회에는 CHECK IN, IN HOUSE LIST에는 없음) — 2026-10-29
+    lo, hi = conv.get("room_range") or (None, None)
     for r in rv:
-        if r.get("arrival") != today_s:
-            skip("오늘 도착이 아님")
-        elif r.get("departure") and r["departure"] <= today_s:
-            skip("당일 출발(대실)")
+        room = r.get("room") or ""
+        if r.get("departure") and r["departure"] <= today_s:
+            skip("오늘 출발(내일 조식 없음)")
         elif _status_in(r, conv["cancel_status"]):
             skip("취소·노쇼")
-        elif (_status_in(r, conv["checked_in_status"]) or (r.get("resv_no") and r["resv_no"] in ih_resv)
-              or (r.get("room") and r["room"] in ih_rooms)
-              or (r.get("guest") and (norm(r["guest"]), r.get("arrival")) in ih_names)):
+        elif (r.get("resv_no") and r["resv_no"] in ih_resv) or (room and room in ih_rooms) \
+                or (r.get("guest") and (norm(r["guest"]), r.get("arrival")) in ih_names):
             skip("이미 체크인(IN HOUSE LIST에 있음)")
+        elif _status_in(r, conv["checked_in_status"]):
+            if room and (lo is None or (room.isdigit() and lo <= int(room) <= hi)):
+                late.setdefault(room, r)  # 투숙 중으로 센다
+            else:
+                skip("체크인했지만 객실번호 없음·범위 밖")
+        elif r.get("arrival") != today_s:
+            skip("오늘 도착이 아님")
         else:
             arrivals.append(r)
+    if late:
+        ih_all = ih_all + list(late.values())
+        rooms = sorted(late)
+        warnings.append(f"IN HOUSE LIST를 받은 뒤 체크인한 {len(late)}객실은 객실조회 파일에서 찾아 투숙 중으로 셌습니다 "
+                        f"(조식 {sum(1 for r in late.values() if r['_bf'])}객실): "
+                        + ", ".join(rooms[:10]) + (" …" if len(rooms) > 10 else ""))
+    if not arrivals and rv and all(_status_in(r, conv["checked_in_status"]) for r in rv):
+        warnings.append("예약 파일에 체크인 전 손님이 없습니다(모두 CHECK IN). 오늘 도착 예정 손님까지 세려면 "
+                        "객실조회에서 상태를 '전체'(확정 포함)로 받아 주세요.")
     if "status" not in rv_mapped:
         warnings.append("예약 리스트에 '예약상태' 열이 없어 취소·노쇼를 가려내지 못했고, 이미 체크인한 손님은 "
                         "예약번호·객실번호·이름으로만 가려냈습니다. 취소 건이 섞이지 않았는지 확인해 주세요.")
@@ -1781,6 +1797,77 @@ def default_out_dir(src_path=None, cfg=None):
     if custom:
         return custom if os.path.isabs(custom) else os.path.join(app_dir(), custom)
     return os.path.join(app_dir(), "마감결과")
+
+
+# ---------------------------------------------------------------- 오늘 마감 한 번에 (ERP원본 폴더, 사용자 요청 2026-10-29)
+def desktop_dir():
+    """바탕화면 폴더 (OneDrive로 옮겨진 바탕화면도 찾는다)"""
+    home = os.path.expanduser("~")
+    for name in (os.path.join("OneDrive", "바탕 화면"), os.path.join("OneDrive", "Desktop"), "바탕 화면", "Desktop"):
+        p = os.path.join(home, name)
+        if os.path.isdir(p):
+            return p
+    return os.path.join(home, "Desktop")
+
+
+def erp_folder(cfg=None):
+    """ERP 원본을 모아 두는 폴더: 화면에서 고른 폴더 > config.json daily.folder > 바탕화면의 ERP원본"""
+    chosen = (load_user_settings().get("erp_folder") or "").strip()
+    if chosen:
+        return chosen
+    custom = (((cfg or {}).get("daily") or {}).get("folder") or "").strip()
+    return custom or os.path.join(desktop_dir(), "ERP원본")
+
+
+_TABLE_EXT = (".xls", ".xlsx", ".xlsm", ".csv", ".htm", ".html")
+
+
+def find_daily_files(folder, business_date, cfg=None):
+    """파일 이름 = 약칭 + 영업일자 MMDD (예: 수입1029, 카드1029, 대외1029, 인하1029, 객실1029).
+    같은 이름이 여러 개면(수입1029 (1).xls 등) 가장 최근 파일. 반환: {약칭 키: 경로}"""
+    cfg = cfg or load_config()
+    names = (cfg.get("daily") or {}).get("names", {})
+    mmdd = _parse_date(business_date).strftime("%m%d")
+    found = {}
+    try:
+        entries = os.listdir(folder)
+    except OSError:
+        return found
+    for key, prefix in names.items():
+        pat = re.compile(rf"^{re.escape(norm(prefix))}\D*{mmdd}(?!\d)")
+        cands = [os.path.join(folder, f) for f in entries
+                 if f.lower().endswith(_TABLE_EXT) and not f.startswith("~$") and pat.match(norm(os.path.splitext(f)[0]))]
+        if cands:
+            found[key] = max(cands, key=os.path.getmtime)
+    return found
+
+
+def daily_jobs(folder, business_date, cfg=None):
+    """오늘 마감 작업 목록 [(종류, 파일, 짝 파일)]과 안내 문구.
+    수입→수입일보, 카드(+객실→객실 자동 채우기)→카드 승인내역, 대외→대외후불,
+    인하+객실(또는 예약)→5번 조식 인원수·호텔 양식 조식명단, 인하만 있으면→4번 조식명단"""
+    cfg = cfg or load_config()
+    f = find_daily_files(folder, business_date, cfg)
+    names = (cfg.get("daily") or {}).get("names", {})
+    mmdd = _parse_date(business_date).strftime("%m%d")
+    jobs, notes = [], []
+    if "income" in f:
+        jobs.append(("income", f["income"], None))
+    if "card" in f:
+        jobs.append(("card", f["card"], f.get("rooms")))
+    if "credit" in f:
+        jobs.append(("credit", f["credit"], None))
+    if "inhouse" in f:
+        partner = f.get("reserve") or f.get("rooms")
+        jobs.append(("bf_count", f["inhouse"], partner) if partner else ("breakfast", f["inhouse"], None))
+    for key, label in (("income", "수입일보"), ("card", "카드 승인내역"), ("credit", "대외후불"), ("inhouse", "IN HOUSE LIST")):
+        if key not in f:
+            notes.append(f"'{names.get(key, key)}{mmdd}' 파일이 없어 {label}은(는) 건너뜁니다.")
+    if "card" in f and "rooms" not in f:
+        notes.append(f"'{names.get('rooms')}{mmdd}'(객실조회) 파일이 없어 카드 객실 칸은 비워 둡니다.")
+    if "inhouse" in f and not (f.get("reserve") or f.get("rooms")):
+        notes.append(f"'{names.get('rooms')}{mmdd}' 파일이 없어 조식은 IN HOUSE LIST만으로 조식명단을 만듭니다(도착 예정 손님 빠짐).")
+    return jobs, notes, f
 
 
 def default_business_date(cfg=None, now=None):
