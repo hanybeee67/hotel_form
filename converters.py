@@ -1065,8 +1065,42 @@ def _bf_people(remark, conv):
         # 숫자가 없으면 호출한 쪽에서 성인+소인 수를 쓴다
         m = (re.search(r"(\d+)\s*(?:인|명)\s*(?:조식|조포|b\s*/?\s*f)", t, re.I)
              or re.search(r"(?:조식|조포|b\s*/?\s*f)[^\d\n]{0,6}(\d+)\s*(?:인|명)", t, re.I))
-        return True, (int(m.group(1)) if m else None), "조식 포함"
+        n = int(m.group(1)) if m else None
+        if n is not None and n > conv.get("max_pax_per_room", 4):
+            # '조식 포함 (35명)'처럼 단체 전체 인원 → 객실 인원이 아님 (2026-10-29: 18실을 35명씩 세어 632명). 호출한 쪽에서 객실별로 센다
+            return True, None, f"조식 포함(단체 {n}명)"
+        return True, n, "조식 포함"
     return False, None, "조식 표시 없음"
+
+
+def _names_count(guest):
+    """투숙객명 '홍길동/김철'처럼 여러 이름이 적혀 있으면 이름 수 (1명이면 None)"""
+    parts = [p for p in re.split(r"[/,，·]", guest or "") if p.strip()]
+    return len(parts) if len(parts) > 1 else None
+
+
+def _pax_fallback(rec):
+    """비고에 객실 인원이 없을 때: 투숙객명에 적힌 이름 수 → 없으면 성인+소인. (인원, 추정 여부)"""
+    k = _names_count(rec.get("guest"))
+    a, c = rec.get("adults"), rec.get("children")
+    ac = (a or 0) + (c or 0) if (a is not None or c is not None) else None
+    if k and (ac is None or k > ac):
+        return k, True
+    return ac, ac is not None
+
+
+def _check_group_totals(records, warnings):
+    """단체 비고의 전체 인원(N명)과 객실별로 센 인원 합을 비교해 작업 기록에 남긴다"""
+    groups = {}
+    for rec in records:
+        m = re.search(r"단체 (\d+)명", rec.get("_why") or "")
+        if m and rec.get("_bf", True):
+            g = groups.setdefault(int(m.group(1)), [0, 0])
+            g[0] += 1
+            g[1] += rec.get("pax") or 0
+    for n, (rooms, pax) in groups.items():
+        same = "일치" if pax == n else f"다름 — 확인 필요"
+        warnings.append(f"단체 비고 '조식 포함 ({n}명)': {rooms}객실을 투숙객명·성인 수로 세어 {pax}명 ({same})")
 
 
 _HANGUL_NAME = re.compile(r"[가-힣]{2,4}")
@@ -1093,6 +1127,9 @@ def mask_korean_name(name, mark="0"):
     회사·단체 이름(씨티소재, 삼성전자), 외국인 이름·영문 섞인 이름(진양그룹-Noah)·5자 이상은 그대로 (2026-10-27).
     ERP가 이미 *로 가린 이름(정*영)은 *를 0으로 바꿔 표기를 통일."""
     s = (name or "").strip()
+    if re.search(r"[/,，]", s):  # '홍길동/김철'처럼 여러 사람 → 각각 가린다 (2026-10-29)
+        return re.sub(r"[^/,，]+", lambda m: m.group(0).replace(m.group(0).strip(), mask_korean_name(m.group(0).strip(), mark))
+                      if m.group(0).strip() else m.group(0), s)
     if _ERP_MASKED.fullmatch(s):
         return re.sub(r"[*＊]", mark, s)
     if not is_korean_person_name(s):
@@ -1336,14 +1373,17 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
             if not ok:
                 reasons[why] = reasons.get(why, 0) + 1
                 continue
+            rec["_why"] = why
             if n is not None:
                 rec["pax"] = n
             elif rec.get("pax") is None:
-                a, c = rec.get("adults"), rec.get("children")
-                if a is not None or c is not None:
-                    rec["pax"] = (a or 0) + (c or 0)
-                    guessed.append(rec.get("room"))
+                pax, guess = _pax_fallback(rec)
+                if pax is not None:
+                    rec["pax"] = pax
+                    if guess and "단체" not in why:
+                        guessed.append(rec.get("room"))
             kept.append(rec)
+        _check_group_totals(kept, warnings)
         # 같은 객실이 여러 줄이면(동숙자 등) 한 번만 센다
         by_room, dup = {}, []
         for rec in kept:
@@ -1430,10 +1470,10 @@ def _bf_rows(conv, bf_conv, path, what):
         if n is not None:
             rec["pax"] = n
         elif rec.get("pax") is None:
-            a, c = rec.get("adults"), rec.get("children")
-            if a is not None or c is not None:
-                rec["pax"] = (a or 0) + (c or 0)
-                rec["_guess"] = True
+            pax, guess = _pax_fallback(rec)
+            if pax is not None:
+                rec["pax"] = pax
+                rec["_guess"] = guess and "단체" not in rec["_why"]
     if "remark" not in mapped and not has_col:
         warnings.append(f"{what}에 '비고'(조식 표시) 열이 없어 조식 대상을 가려내지 못했습니다.")
     return records, [f"[{what}] " + w for w in warnings], mapped
@@ -1505,6 +1545,8 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
     if "status" not in rv_mapped:
         warnings.append("예약 리스트에 '예약상태' 열이 없어 취소·노쇼를 가려내지 못했고, 이미 체크인한 손님은 "
                         "예약번호·객실번호·이름으로만 가려냈습니다. 취소 건이 섞이지 않았는지 확인해 주세요.")
+
+    _check_group_totals(ih_all + arrivals, warnings)
 
     # 3) 집계
     def summary(rows):

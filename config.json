@@ -203,6 +203,7 @@
       "group_rows": false,
       "group_min_rooms": 2,
       "group_room_label": "단체",
+      "max_pax_per_room": 4,
       "bf_include_regex": "조식|조포|(?<![a-z])b\\s*/?\\s*f(?![a-z])|breakfast",
       "bf_exclude_regex": "룸\\s*온\\s*[리니]|룸\\s*only|룸만|room\\s*only|(?<![a-z])r\\s*/?\\s*o(?![a-z])|조식\\s*(?:불|미|비)\\s*포함|조식\\s*(?:없음|없이|제외|불가|x|no|안\\s*함)|노\\s*조식|no\\s*breakfast|without\\s*breakfast|조식\\s*[✕×]",
       "no_breakfast_values": ["", "0", "n", "no", "x", "-", "없음", "불포함", "제외", "false", "ro"],

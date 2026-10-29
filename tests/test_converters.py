@@ -565,3 +565,23 @@ def test_card_room_fill_from_reservation_list(cfg, tmp_path):
     assert rows == [("301/310", 440000), ("307", 198000), ("501", 210000), ("708", 250000), (None, 130000)]
     assert ws["A3"].fill.fgColor.rgb.endswith("FFF2B3") and not ws["A4"].fill.fgColor.rgb.endswith("FFF2B3")
     assert any("A9" in w for w in res["warnings"]) and any("301/310" in w for w in res["warnings"])
+
+
+def test_breakfast_group_total_remark_not_per_room(cfg, tmp_path):
+    """단체 비고 '조식 포함 (35명)'은 단체 전체 인원 → 객실마다 35명으로 세지 않고 투숙객명 수로 센다 (2026-10-29: 632명 문제)."""
+    rv = [["Acct#", "객실#", "도착일자", "출발일자", "Adult", "Child", "투숙객명", "상태", "비고"]]
+    for i in range(3):
+        rv.append(["G1", f"040{i + 1}", "2026-10-22", "2026-10-23", 1, 0, "가상갑/가상을", "확정", "조식 포함 (5명)\n현장 결제"])
+    rv.append(["G1", "0404", "2026-10-22", "2026-10-23", 1, 0, "가상병", "확정", "조식 포함 (5명)\n현장 결제"])
+    res = cv.breakfast_count(_xlsx(tmp_path / "ih.xlsx", INHOUSE), _xlsx(tmp_path / "rv.xlsx", rv),
+                             str(tmp_path / "out"), BDATE, cfg)
+    assert res["arrivals"] == 7  # 2+2+2+1 (비고의 5명은 단체 전체 — 여기선 이름 수 7과 다름 → 경고)
+    assert any("단체 비고" in w and "다름" in w for w in res["warnings"])
+    ok, n, why = cv._bf_people("조식 포함 (35명)", cfg["converters"]["breakfast"])
+    assert ok and n is None and "단체 35명" in why
+    assert cv._bf_people("2인 조식 포함", cfg["converters"]["breakfast"])[1] == 2
+
+
+def test_mask_multiple_names():
+    assert cv.mask_korean_name("홍길동/김철") == "홍0동/김0"
+    assert cv.mask_korean_name("Zhu bao jun / Lin jia hao") == "Zhu bao jun / Lin jia hao"
