@@ -1089,6 +1089,18 @@ def _pax_fallback(rec):
     return ac, ac is not None
 
 
+def _pax_sanity(records, conv, warnings):
+    """안전장치 (2026-10-29 '객실마다 35명' 재발 방지): 한 객실 인원이 객실 최대 인원보다 많으면
+    맨 위에 '확인 필요' 경고를 띄운다. 어떤 경로로 인원을 셌든 마지막에 한 번 더 검사한다."""
+    cap = conv.get("max_pax_per_room", 4)
+    big = [f"{r.get('room') or '미배정'}({r.get('pax')}명)" for r in records
+           if isinstance(r.get("pax"), (int, float)) and r["pax"] > cap]
+    if big:
+        warnings.insert(0, f"⚠ 확인 필요: 한 객실 인원이 {cap}명을 넘는 곳이 있습니다 — " + ", ".join(big)
+                        + " (단체 전체 인원이 객실 인원으로 들어갔을 수 있습니다)")
+    return not big
+
+
 def _check_group_totals(records, warnings):
     """단체 비고의 전체 인원(N명)과 객실별로 센 인원 합을 비교해 작업 기록에 남긴다"""
     groups = {}
@@ -1404,6 +1416,7 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
         if guessed:
             warnings.append("비고에 인원(N인)이 없어 성인+소인 수로 채운 객실 — 실제 조식 인원을 확인해 주세요: "
                             + ", ".join(guessed))
+        _pax_sanity(records, conv, warnings)
         if conv.get("group_rows"):
             records, groups = _group_breakfast(records, conv)
             for name, n, pax in groups:
@@ -1556,6 +1569,7 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
 
     ih_bf, ih_rooms_n, ih_pax = summary(ih_all)
     ar_bf, ar_rooms_n, ar_pax = summary(arrivals)
+    sanity_ok = _pax_sanity(ih_bf + ar_bf, bf_conv, warnings)
     total = ih_pax + ar_pax
     excl = lambda rows: sum(1 for r in rows if not r["_bf"])
     warnings.insert(0, f"{bf_date:%m/%d} 아침 조식 {total}명 = 투숙 중 {ih_pax}명({ih_rooms_n}객실) "
@@ -1632,7 +1646,32 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
         _mark_styles_applied(out_path)
     except PermissionError:
         raise ConversionError(f"결과 파일이 엑셀에서 열려 있습니다. 닫은 뒤 다시 시도해 주세요.\n{out_path}")
-    return {"output": out_path, "count": ih_rooms_n + ar_rooms_n, "total": total, "inhouse": ih_pax,
+    # 5) 호텔 양식 조식명단 (투숙 중 + 오늘 도착 예정, 사용자 요청 2026-10-29) — 4번 조식명단과 같은 양식·인쇄 설정
+    list_path = None
+    if ih_bf or ar_bf:
+        recs = []
+        for r0 in ih_bf + ar_bf:
+            guest = r0.get("guest") or ""
+            if cfg.get("mask_korean_names", True) and bf_conv.get("mask_names"):
+                guest = mask_korean_name(guest)
+            recs.append({"room": r0.get("room") or "미배정", "guest": guest, "pax": r0.get("pax")})
+        recs.sort(key=lambda r0: (not r0["room"].isdigit(), _room_key(r0)))
+        list_name = re.sub(r'[\\/:*?"<>|]', "-", conv.get("list_file_pattern", "조식명단(예약포함) {date}").format(
+            date=bf_s, m=bf_date.month, d=bf_date.day))
+        list_path = os.path.join(out_dir, f"{list_name}.xlsx")
+        tpl = resolve_template(bf_conv.get("template"))
+        warnings += write_workbook(list_path, bf_date.strftime("%m%d"),
+                                   bf_conv["sheet_title"].format(md=bf_date.strftime("%m/%d")), bf_conv["output"], recs,
+                                   bf_conv.get("sum", []), bf_conv.get("number_format", "0"), None, None,
+                                   bf_conv.get("row_height"), template=tpl, font_cfg=bf_conv.get("font"),
+                                   sum_label=bf_conv.get("sum_label", "계"), sum_label_field=bf_conv.get("sum_label_field"),
+                                   drop_trailer=bf_conv.get("drop_trailer", ()),
+                                   fit_pages=bf_conv.get("fit_pages", cfg.get("fit_pages")),
+                                   fill_pages=bf_conv.get("fill_pages", False), width_px=bf_conv.get("width_px"))
+        warnings.append(f"호텔 양식 조식명단({len(recs)}객실 {total}명)도 만들었습니다: {os.path.basename(list_path)}"
+                        + (" — 미배정 객실은 객실번호를 직접 적어 주세요" if any(r0['room'] == '미배정' for r0 in recs) else ""))
+    return {"output": out_path, "list": list_path, "sanity_ok": sanity_ok,
+            "count": ih_rooms_n + ar_rooms_n, "total": total, "inhouse": ih_pax,
             "arrivals": ar_pax, "warnings": warnings, "title": conv["title"], "bf_date": bf_s}
 
 

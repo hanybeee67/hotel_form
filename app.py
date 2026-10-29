@@ -29,7 +29,7 @@ DOCS = [
 ]
 # 5번: 조식 인원수 — 파일 두 개(IN HOUSE LIST + 객실 예약 리스트)를 합쳐 내일 아침 인원만 센다 (2026-10-27)
 BF_COUNT = ("bf_count", "조식 인원수 (내일 아침)",
-            "체크인한 손님(IN HOUSE LIST) + 오늘 도착 예정 손님(객실 예약 리스트)을 합쳐 인원만 집계 · 저녁 8시 보고용",
+            "체크인한 손님(IN HOUSE LIST) + 오늘 도착 예정 손님(객실 예약 리스트) → 내일 아침 인원 + 호텔 양식 조식명단",
             "IN HOUSE LIST 와 객실 예약 리스트(오늘 도착) 두 파일을 차례로 선택")
 
 # ---------------------------------------------------------------- 디자인
@@ -376,11 +376,18 @@ class App(tk.Tk):
                           f"{os.path.basename(data['output'])}", "ok")
                 for w in data["warnings"][1:]:
                     self._log("   확인: " + w, "warn")
-                self.cards[kind].set_state("ok", f"조식 {data['total']}명", data["output"])
-                self.after(50, lambda d=data: messagebox.showinfo(
+                # 결과 열기 = 호텔 양식 조식명단 (없으면 집계표)
+                self.cards[kind].set_state("ok" if data.get("sanity_ok", True) else "warn",
+                                           f"조식 {data['total']}명" + ("" if data.get("sanity_ok", True) else " · 확인 필요"),
+                                           data.get("list") or data["output"])
+                if data.get("list"):
+                    self._log(f"   조식명단(호텔 양식) → {os.path.basename(data['list'])}  ('결과 열기')", "ok")
+                show = messagebox.showinfo if data.get("sanity_ok", True) else messagebox.showwarning
+                self.after(50, lambda d=data, show=show: show(
                     "조식 인원수", f"{d['bf_date'][5:].replace('-', '/')} 아침 조식  {d['total']}명\n\n"
                     f"투숙 중(체크인 완료)  {d['inhouse']}명\n오늘 도착 예정(체크인 전)  {d['arrivals']}명\n\n"
-                    "자세한 내용은 작업 기록과 결과 엑셀을 확인하세요."))
+                    + ("" if d.get("sanity_ok", True) else "⚠ 한 객실 인원이 너무 많은 곳이 있습니다. 작업 기록을 꼭 확인하세요.\n\n")
+                    + "카드의 '결과 열기'로 호텔 양식 조식명단을 열 수 있습니다."))
                 return
             self._log(f"[{title}] {data['count']}건 변환 완료 → {os.path.basename(data['output'])}", "ok")
             for w in data["warnings"]:

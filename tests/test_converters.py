@@ -585,3 +585,25 @@ def test_breakfast_group_total_remark_not_per_room(cfg, tmp_path):
 def test_mask_multiple_names():
     assert cv.mask_korean_name("홍길동/김철") == "홍0동/김0"
     assert cv.mask_korean_name("Zhu bao jun / Lin jia hao") == "Zhu bao jun / Lin jia hao"
+
+
+def test_breakfast_count_makes_hotel_form_list(cfg, tmp_path, monkeypatch):
+    """5번 조식 인원수: 투숙 중 + 도착 예정을 합친 호텔 양식 조식명단도 만든다 (2026-10-29). 미배정 객실은 맨 아래."""
+    monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
+    res = cv.breakfast_count(_xlsx(tmp_path / "ih.xlsx", INHOUSE), _xlsx(tmp_path / "rv.xlsx", RESERVE),
+                             str(tmp_path / "out"), BDATE, cfg)
+    assert os.path.basename(res["list"]) == "조식명단(예약포함) 2026-10-23.xlsx" and res["sanity_ok"]
+    ws, v = _values(res["list"])
+    assert v[0][0] == "조 식 명 단(10/23)" and ws["B3"].font.name == "맑은 고딕"
+    body = [r for r in v[2:] if r[0] and (str(r[0]).isdigit() or r[0] == "미배정")]
+    assert [r[0] for r in body] == ["0301", "0303", "0401", "미배정"]
+    total = next(r for r in v if r[0] == "합계")
+    assert total[2].startswith("=SUM(")
+
+
+def test_pax_sanity_warns_on_big_room(cfg):
+    """안전장치: 한 객실 인원이 최대 인원(4)을 넘으면 맨 위에 '확인 필요' 경고 (632명 사고 재발 방지)."""
+    w = ["요약"]
+    assert not cv._pax_sanity([{"room": "0302", "pax": 35}, {"room": "0303", "pax": 2}], cfg["converters"]["breakfast"], w)
+    assert w[0].startswith("⚠ 확인 필요") and "0302(35명)" in w[0]
+    assert cv._pax_sanity([{"room": "0303", "pax": 4}], cfg["converters"]["breakfast"], [])
