@@ -1288,7 +1288,72 @@ def folio_reset_date(entries, bdate):
     return last
 
 
-def _income_sections(records, bdate, conv, warnings, folios=None, partners=None):
+def _report_rows(path, md):
+    """수입일보 파일(프로그램 결과 .xlsx 또는 호텔 수작업 .xls/.xlsx)의 행 목록 [[(값, 수식)…]].
+    시트가 여러 개면 제목에 MM/DD가 있는 시트 → 선택된 시트 → 첫 시트"""
+    with open(path, "rb") as f:
+        head = f.read(4)
+    if head[:2] == b"PK":
+        wb_v = load_workbook(path, data_only=True)
+        wb_f = load_workbook(path)
+        pick = next((n for n in wb_v.sheetnames if md in str(wb_v[n]["A1"].value or "")), None)
+        name = pick or wb_v.active.title
+        wv, wf = wb_v[name], wb_f[name]
+        return [[(wv.cell(r, c).value, wf.cell(r, c).value) for c in range(1, wv.max_column + 1)]
+                for r in range(1, wv.max_row + 1)]
+    import xlrd
+    book = xlrd.open_workbook(path)
+    sheets = book.sheets()
+    sh = next((x for x in sheets if x.nrows and md in str(x.cell_value(0, 0))), None) \
+        or next((x for x in sheets if x.sheet_visible and getattr(x, "sheet_selected", 0)), None) or sheets[0]
+    return [[(sh.cell_value(r, c), sh.cell_value(r, c)) for c in range(sh.ncols)] for r in range(sh.nrows)]
+
+
+def read_prev_report(path, prev_date):
+    """어제 수입일보에서 ROOM 묶음(첫 '계' 줄 위)의 객실별 (도착일, 숙박수, 매출, 누계)를 읽는다 (사용자 지시 2026-11-01:
+    객실마다 거래내역을 받기 번거로움 → 어제 일보의 누계를 이어받는다). 근무자가 엑셀에서 고친 숙박수·누계도 반영. 못 읽으면 {}"""
+    try:
+        rows = _report_rows(path, prev_date.strftime("%m/%d"))
+    except Exception:
+        return {}
+    hi = next((i for i, r in enumerate(rows[:10]) if {"객실", "숙박수", "누계"} <= {norm(v) for v, _ in r}), None)
+    if hi is None:
+        return {}
+    h = [norm(v) for v, _ in rows[hi]]
+    c_room, c_arr, c_n, c_s, c_cum = (h.index(k) if k in h else None for k in ("객실", "도착일", "숙박수", "매출", "누계"))
+    if None in (c_room, c_n, c_s, c_cum):
+        return {}
+    from openpyxl.utils import column_index_from_string
+    out = {}
+    for r in rows[hi + 1:]:
+        if any(norm(v) in _TOTAL_WORDS for v, _ in r[:8]):
+            break  # ROOM 묶음 끝 (첫 계 줄)
+        room = fmt_room(r[c_room][0], "pad4") if r[c_room][0] not in (None, "") else ""
+        if not re.fullmatch(r"\d{4}", room):
+            continue
+        sales, n = to_number(r[c_s][0]), to_number(r[c_n][0])
+        val, formula = r[c_cum]
+        cum = to_number(val) if not (isinstance(val, str) and val.startswith("=")) else None
+        if cum is None and isinstance(formula, str):  # 엑셀이 계산값을 저장하지 않은 프로그램 결과 파일
+            row_of = lambda ref: r[column_index_from_string(re.match(r"[A-Z]+", ref).group()) - 1][0]
+            m = re.fullmatch(r"=([A-Z]+\d+)\*([A-Z]+\d+)", formula)
+            m2 = re.fullmatch(r"=(-?\d+(?:\.\d+)?)\+([A-Z]+\d+)", formula)
+            m3 = re.fullmatch(r"=([A-Z]+\d+)", formula)
+            if m:
+                a, b = to_number(row_of(m.group(1))), to_number(row_of(m.group(2)))
+                cum = a * b if a is not None and b is not None else None
+            elif m2:
+                cum = float(m2.group(1)) + (to_number(row_of(m2.group(2))) or 0)
+            elif m3:
+                cum = to_number(row_of(m3.group(1)))
+        if cum is None or n is None:
+            continue
+        arr = to_date(r[c_arr][0]) if c_arr is not None else ""
+        out[room] = (arr, int(n), sales or 0, int(cum) if float(cum).is_integer() else cum)
+    return out
+
+
+def _income_sections(records, bdate, conv, warnings, folios=None, partners=None, prev_rep=None):
     """수입일보를 호텔 실제 일보 모양으로 (사용자 지시 2026-10-28, 실제 10/28 일보로 확인).
     - 매출구분(ROOM · Extra-Charge · 1회용품 · 조식 · 연회 …) 묶음을 ERP 순서대로, 묶음마다 계 줄(앞 묶음까지 이어서 합산)
     - 매출 0 줄(CASH·카드·선수금 등)은 뺀다. 객실번호 범위와 상관없이 매출이 잡힌 줄은 모두 (1030 외부 조식 포함)
@@ -1309,7 +1374,7 @@ def _income_sections(records, bdate, conv, warnings, folios=None, partners=None)
     if room_kind in groups:  # ROOM 묶음을 맨 앞에
         order.remove(room_kind)
         order.insert(0, room_kind)
-    out, merged, bad, used, long_no_folio, stale, odd = [], [], [], [], [], [], []
+    out, merged, bad, used, long_no_folio, stale, odd, carried = [], [], [], [], [], [], [], []
     for sec, key in enumerate(order):
         rows = groups[key]
         if key == room_kind:
@@ -1338,6 +1403,15 @@ def _income_sections(records, bdate, conv, warnings, folios=None, partners=None)
                         odd.append(f"{rec['room']}(잔액 {prev + rate:,.0f}원, {n}박)")
                     rec["nights"] = n
                     used.append(f"{rec['room']}({prev + (rec.get('sales') or 0):,.0f}원)")
+                elif rec.get("room") in (prev_rep or {}) and (not prev_rep[rec["room"]][0]
+                                                               or prev_rep[rec["room"]][0] == rec.get("arrival")):
+                    # 어제 일보 이어받기: 누계 = 어제 누계 + 오늘 매출, 숙박수 = 어제 + 1 (같은 손님 = 도착일이 같을 때만)
+                    _, pn, _, pcum = prev_rep[rec["room"]]
+                    rate = rec.get("sales") or 0
+                    rec["nights"] = pn + 1
+                    if pcum != rate * pn:
+                        rec["_cum_prev"] = pcum  # 요금이 바뀌었거나 근무자가 누계를 고친 경우
+                    carried.append(rec["room"])
                 elif rec.get("room") in (partners or {}) and rec["nights"] is not None:
                     # 같은 회사 동료 객실: ERP가 대표 객실 거래내역을 주므로, 대표 객실이 정산한 다음 날부터 센다 (사용자 지시 2026-11-01)
                     rep_room, reset = partners[rec["room"]]
@@ -1377,6 +1451,8 @@ def _income_sections(records, bdate, conv, warnings, folios=None, partners=None)
         extra = sorted(set(folios) - {r.get("room") for r in out})
         if extra:
             warnings.append("거래내역 파일은 있지만 오늘 수입일보에 없는 객실(퇴실 등): " + ", ".join(extra))
+    if carried:
+        warnings.append(f"어제 일보에서 누계를 이어받은 객실 {len(carried)}개 (누계 = 어제 누계 + 오늘 매출, 숙박수 = 어제 + 1)")
     if odd:
         warnings.append("잔액이 매출로 나누어떨어지지 않는 객실(요금 변경·부분 입금) — 누계는 거래내역 잔액 그대로, "
                         "숙박수는 마지막 정산 뒤 묵은 날입니다. 확인해 주세요: " + ", ".join(odd))
@@ -1532,7 +1608,28 @@ def card_knowledge(erp_records, out_dir, cfg=None):
             "hotel": hotel, "other": max(other_count, key=other_count.get) if other_count else None}
 
 
-def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False, room_source=None, folios=None):
+def find_prev_report(out_dir, prev_date, cfg=None):
+    """어제 수입일보: ① ERP원본 폴더의 수작업 일보 '일보MMDD' (호텔에서 직접 만든 것이 우선) ② 결과 폴더의 '수입일보 YYYY-MM-DD.xlsx'"""
+    cfg = cfg or {}
+    mmdd = prev_date.strftime("%m%d")
+    prefix = ((cfg.get("daily") or {}).get("names") or {}).get("prev_report", "일보")
+    folder = erp_folder(cfg)
+    try:
+        pat = re.compile(rf"^{re.escape(norm(prefix))}\D*{mmdd}(?!\d)")
+        cands = [os.path.join(folder, f) for f in os.listdir(folder)
+                 if f.lower().endswith(_TABLE_EXT) and not f.startswith("~$") and pat.match(norm(os.path.splitext(f)[0]))]
+        if cands:
+            return max(cands, key=os.path.getmtime)
+    except OSError:
+        pass
+    conv = (cfg.get("converters") or {}).get("income") or {}
+    name = conv.get("file_pattern", "수입일보 {date}").format(date=prev_date.isoformat(), m=prev_date.month, d=prev_date.day)
+    p = os.path.join(writable_out_dir(out_dir)[0], f"{name}.xlsx")
+    return p if os.path.exists(p) else None
+
+
+def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False, room_source=None, folios=None,
+                 prev_report=None):
     """kind: income | card | credit | breakfast.
     반환: {'output': 경로, 'count': 건수, 'warnings': [...], 'title': 이름}"""
     cfg = cfg or load_config()
@@ -1565,7 +1662,14 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
                 folio_map[got[0]] = got[1]
             else:
                 warnings.append(f"객실별 거래내역으로 읽지 못한 파일: {os.path.basename(path)}")
-        records = _income_sections(records, bdate, conv, warnings, folio_map, partners)
+        prev_date = bdate - dt.timedelta(days=1)
+        prev_path = prev_report or find_prev_report(out_dir, prev_date, cfg)
+        prev_map = read_prev_report(prev_path, prev_date) if prev_path else {}
+        if prev_path and not prev_map:
+            warnings.append(f"어제 일보({os.path.basename(prev_path)})에서 객실 누계를 읽지 못했습니다.")
+        elif prev_path:
+            warnings.append(f"어제 일보: {os.path.basename(prev_path)}")
+        records = _income_sections(records, bdate, conv, warnings, folio_map, partners, prev_map)
         warnings.insert(0, "매출 열은 ERP의 '매출'(부가세 포함 금액)로 채웠습니다.")
         warnings.append("'선/후'는 노란 칸에 직접 입력하세요(카.선 / 현.선 / 후 …). "
                         "누계 = 현재 잔액(정산 뒤 묵은 날 × 매출, 수식) — 숙박수를 고치면 누계도 바뀝니다.")

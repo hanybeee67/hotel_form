@@ -173,7 +173,7 @@ class App(tk.Tk):
         self._log(f"결과 저장 위치: {self.last_dir}  ('저장 위치 변경'으로 바꿀 수 있습니다)", "sub")
         names = self.cfg.get("daily", {}).get("names", {})
         self._log(f"ERP 원본 폴더: {cv.erp_folder(self.cfg)}  — 파일 이름은 "
-                  + ", ".join(f"{v}{self.bdate:%m%d}" for k, v in names.items() if k != "reserve")
+                  + ", ".join(f"{v}{self.bdate:%m%d}" for k, v in names.items() if k not in ("reserve", "prev_report"))
                   + " 처럼 저장 후 [오늘 마감 한 번에]", "sub")
         self.after(100, self._poll)
 
@@ -491,7 +491,7 @@ class App(tk.Tk):
             messagebox.showwarning("오늘 마감 한 번에",
                                    f"ERP원본 폴더에 {mmdd} 파일이 없습니다.\n\n{folder}\n\n"
                                    "ERP에서 엑셀전환한 파일을 이 폴더에 이렇게 저장해 주세요:\n"
-                                   + ", ".join(f"{v}{mmdd}" for k, v in names.items() if k != "reserve")
+                                   + ", ".join(f"{v}{mmdd}" for k, v in names.items() if k not in ("reserve", "prev_report"))
                                    + "\n\n영업일자가 맞는지도 확인하세요.")
             return
         self._start(jobs, unique=False)

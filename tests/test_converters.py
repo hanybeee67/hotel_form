@@ -748,3 +748,32 @@ def test_folio_partner_room(cfg, tmp_path):
     res2 = cv.convert_file("income", _xlsx(tmp_path / "수입2.xlsx", [INCOME[0], row("0613", "2026-10-27")]),
                            str(tmp_path / "out2"), "2026-10-28", cfg, folios=[c])
     assert _values(res2["output"])[1][2][6] == 2
+
+
+def test_income_carries_previous_report(cfg, tmp_path):
+    """어제 일보 이어받기 (2026-11-01): 누계 = 어제 누계 + 오늘 매출, 숙박수 = 어제 + 1. 도착일이 다르면(새 손님) 이어받지 않음.
+    ① 결과 폴더의 프로그램 일보(수식만 있고 계산값 없음) ② ERP원본 폴더의 수작업 '일보MMDD'(값)가 우선."""
+    def row(room, sales, arr):
+        return ["ROOM", "손님", arr, "2026-11-20", "D/T", "회사", room, "", 0, 0, "", "", 1, 0, 0, 0, 0, sales, 0]
+    out = tmp_path / "out"
+    day1 = [INCOME[0], row("0301", 100000, "2026-10-01"), row("0302", 90000, "2026-10-20")]
+    cv.convert_file("income", _xlsx(tmp_path / "d1.xlsx", day1), str(out), "2026-10-21", cfg)
+    day2 = [INCOME[0], row("0301", 100000, "2026-10-01"), row("0302", 90000, "2026-10-22"), row("0303", 80000, "2026-10-22")]
+    res = cv.convert_file("income", _xlsx(tmp_path / "d2.xlsx", day2), str(out), BDATE, cfg)
+    _, v = _values(res["output"])
+    got = {r[0]: (r[6], r[8]) for r in v[2:5]}
+    assert got["0301"] == (22, "=H3*G3")  # 어제(21박) + 1 — 도착일부터 셌어도 22지만 어제 값을 따름
+    assert got["0302"][0] == 1  # 도착일이 바뀜 = 새 손님 → 이어받지 않음
+    assert any("이어받은 객실 1개" in w for w in res["warnings"])
+    # 수작업 일보(값) — 중간 정산으로 0301은 5박 500,000, 근무자가 적은 값이 우선
+    erp = tmp_path / "ERP원본"
+    erp.mkdir()
+    monkey = {"daily": {"folder": str(erp), "names": cfg["daily"]["names"]}}
+    manual = [["수 입 일 보 (10/21)"], ["객실", "투숙객명", "거래처", "도착일", "출발일", "선/후", "숙박수", "매출", "누계"],
+              ["301", "손님", "회사", "2026-10-01", "2026-11-20", "후", 5, 100000, 500000],
+              [None, None, None, None, None, None, "계", 100000, 500000]]
+    _xlsx(erp / "일보1021.xlsx", manual)
+    res2 = cv.convert_file("income", _xlsx(tmp_path / "d3.xlsx", day2), str(out), BDATE, dict(cfg, **monkey))
+    _, v2 = _values(res2["output"])
+    assert (v2[2][0], v2[2][6], v2[2][8]) == ("0301", 6, "=H3*G3")
+    assert any("일보1021" in w for w in res2["warnings"])
