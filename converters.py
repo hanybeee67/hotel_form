@@ -1294,7 +1294,7 @@ def _income_sections(records, bdate, conv, warnings, folios=None):
     if room_kind in groups:  # ROOM 묶음을 맨 앞에
         order.remove(room_kind)
         order.insert(0, room_kind)
-    out, merged, bad, used, long_no_folio, stale = [], [], [], [], [], []
+    out, merged, bad, used, long_no_folio, stale, odd = [], [], [], [], [], [], []
     for sec, key in enumerate(order):
         rows = groups[key]
         if key == room_kind:
@@ -1314,9 +1314,14 @@ def _income_sections(records, bdate, conv, warnings, folios=None):
                     last = max((d for d, _, _ in folios[rec["room"]]), default="")
                     if last and last < (bdate - dt.timedelta(days=1)).isoformat():
                         stale.append(f"{rec['room']}(마지막 {last[5:]})")
+                    rate = rec.get("sales") or 0
+                    if rate and prev % rate == 0:
+                        # 잔액이 매출의 정수배(일부 박만 정산·입금한 경우 포함) → 숙박수 = 남은 잔액의 박 수, 누계 = 매출×숙박수
+                        n = int(prev // rate) + 1
+                    else:
+                        rec["_cum_prev"] = prev  # 요금 변경·부분 입금 → 누계 = 어제까지 잔액 + 오늘 매출 (숙박수는 정산 뒤 묵은 날)
+                        odd.append(f"{rec['room']}(잔액 {prev + rate:,.0f}원, {n}박)")
                     rec["nights"] = n
-                    if prev != (rec.get("sales") or 0) * (n - 1):
-                        rec["_cum_prev"] = prev  # 요금이 바뀐 적이 있으면 누계 = 어제까지 잔액 + 오늘 매출
                     used.append(f"{rec['room']}({prev + (rec.get('sales') or 0):,.0f}원)")
                 elif rec["nights"] is None:
                     bad.append(rec.get("room") or "객실 없음")
@@ -1349,6 +1354,9 @@ def _income_sections(records, bdate, conv, warnings, folios=None):
         extra = sorted(set(folios) - {r.get("room") for r in out})
         if extra:
             warnings.append("거래내역 파일은 있지만 오늘 수입일보에 없는 객실(퇴실 등): " + ", ".join(extra))
+    if odd:
+        warnings.append("잔액이 매출로 나누어떨어지지 않는 객실(요금 변경·부분 입금) — 누계는 거래내역 잔액 그대로, "
+                        "숙박수는 마지막 정산 뒤 묵은 날입니다. 확인해 주세요: " + ", ".join(odd))
     if stale:
         warnings.append("⚠ 거래내역 파일이 오래되어(어제까지 내역이 없음) 누계가 모자랄 수 있습니다 — 오늘 다시 받아 주세요: " + ", ".join(stale))
     if long_no_folio:

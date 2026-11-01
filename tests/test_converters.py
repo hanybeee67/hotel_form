@@ -711,3 +711,21 @@ def test_card_manual_rows_auto_fill_learned(cfg, tmp_path):
     assert merch["9000000000|가상한벽카드"] == "777" and merch["0000000000|가상카드"] == "123"
     dvs = [dv for dv in ws2.data_validations.dataValidation if f"C{r2}" in str(dv.sqref)]
     assert dvs and dvs[0].formula1 == '"9000000000,0000000000"'
+
+
+def test_folio_partial_payment(cfg, tmp_path):
+    """중간 정산·부분 입금: 잔액이 매출의 정수배면 숙박수 = 남은 박 수, 아니면 누계 = 잔액 그대로(수식) + 확인 경고."""
+    rows = [FOLIO_HEAD] + [["", f"2026-10-{d:02d}", 1, "0612", "객실", "ROOM", 99000, 0, ""] for d in range(1, 28)]
+    rows.append(["", "2026-10-15", 1, "0612", "객실", "CASH", 0, 99000 * 10, ""])  # 10박만 입금
+    _xlsx(tmp_path / "a.xlsx", rows)
+    rows2 = [FOLIO_HEAD] + [["", f"2026-10-{d:02d}", 1, "0613", "객실", "ROOM", 99000, 0, ""] for d in range(20, 28)]
+    rows2.append(["", "2026-10-25", 1, "0613", "객실", "CASH", 0, 50000, ""])  # 일부 금액만 입금
+    _xlsx(tmp_path / "b.xlsx", rows2)
+    def row(room):
+        return ["ROOM", "손님", "2026-10-01", "2026-11-05", "D/T", "회사", room, "", 0, 0, "", "", 1, 0, 0, 0, 0, 99000, 0]
+    res = cv.convert_file("income", _xlsx(tmp_path / "수입.xlsx", [INCOME[0], row("0612"), row("0613")]), str(tmp_path / "out"),
+                          "2026-10-28", cfg, folios=[str(tmp_path / "a.xlsx"), str(tmp_path / "b.xlsx")])
+    _, v = _values(res["output"])
+    assert v[2][0] == "0612" and v[2][6] == 18 and v[2][8] == "=H3*G3"  # 27박 - 10박 입금 = 17 + 오늘 1
+    assert v[3][0] == "0613" and v[3][8] == f"={99000 * 8 - 50000}+H4"
+    assert any("나누어떨어지지" in w and "0613" in w for w in res["warnings"])
