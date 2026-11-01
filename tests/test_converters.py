@@ -729,3 +729,13 @@ def test_folio_partial_payment(cfg, tmp_path):
     assert v[2][0] == "0612" and v[2][6] == 18 and v[2][8] == "=H3*G3"  # 27박 - 10박 입금 = 17 + 오늘 1
     assert v[3][0] == "0613" and v[3][8] == f"={99000 * 8 - 50000}+H4"
     assert any("나누어떨어지지" in w and "0613" in w for w in res["warnings"])
+
+
+def test_folio_wrong_file_warning(cfg, tmp_path):
+    """파일 이름(612_…)과 내용(0602 거래내역)이 다르면 경고 (2026-11-01 실제로 602 내역이 612 이름으로 들어옴)."""
+    days = [f"2026-10-{d:02d}" for d in range(20, 28)]
+    a = _folio(tmp_path / "602_가상A.xlsx", "0602", days, 99000)
+    b = _folio(tmp_path / "612_가상B.xlsx", "0602", days, 99000)
+    res = cv.convert_file("income", _xlsx(tmp_path / "수입.xlsx", INCOME), str(tmp_path / "out"), BDATE, cfg, folios=[a, b])
+    assert any("612호인데 내용은 0602호" in w for w in res["warnings"])
+    assert any("0602호 거래내역이 두 개" in w for w in res["warnings"])
