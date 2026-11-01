@@ -731,10 +731,51 @@ def _fill_two_equal_pages(ws, first, last, right, usable_h, repeat):
     return True
 
 
+_LOOKUP_SHEET = "카드목록"
+
+
+def _manual_card_formulas(ws, r, out_cols, idx, letter, look):
+    """한벽루 줄 (사용자 지시 2026-11-01): 카드번호 앞 4자리 → 매입사, 사업자번호+매입사 → 가맹점번호, 구분 = 카드승인.
+    사업자번호는 한벽루 번호가 기본이고 목록에서 호텔 번호로 바꿀 수 있다. 근무자가 칸에 직접 쓰면 그 값이 우선."""
+    f = {"card": "card_no", "biz": "biz_no", "acq": "acquirer", "merchant": "merchant_no", "kind": "kind"}
+    f.update(look.get("fields") or {})
+    if not all(f[k] in idx for k in ("card", "biz", "acq", "merchant")):
+        return
+    L = {k: letter(idx[v]) for k, v in f.items() if v in idx}
+    cell = lambda k: ws[f"{L[k]}{r}"]
+    blank = f'{L["card"]}{r}=""'
+    if look.get("other"):
+        cell("biz").value = f'=IF({blank},"","{look["other"]}")'
+    cell("acq").value = f'=IF({blank},"",IFERROR(VLOOKUP(LEFT({L["card"]}{r},4),{_LOOKUP_SHEET}!$A:$B,2,FALSE),""))'
+    cell("merchant").value = (f'=IF({L["acq"]}{r}="","",IFERROR(VLOOKUP({L["biz"]}{r}&"|"&{L["acq"]}{r},'
+                              f'{_LOOKUP_SHEET}!$D:$E,2,FALSE),""))')
+    if "kind" in L:
+        cell("kind").value = f'=IF({blank},"","카드승인")'
+    choices = [b for b in (look.get("other"), look.get("hotel")) if b]
+    if choices:
+        dv = DataValidation(type="list", formula1='"' + ",".join(choices) + '"', allow_blank=True, showErrorMessage=False)
+        dv.promptTitle, dv.prompt, dv.showInputMessage = "사업자번호", "한벽루 / 호텔 중 고르세요", True
+        ws.add_data_validation(dv)
+        dv.add(f"{L['biz']}{r}")
+
+
+def _add_card_lookup_sheet(wb, look):
+    """숨긴 시트 '카드목록': A·B = 카드번호 앞 4자리 → 매입사, D·E = '사업자번호|매입사' → 가맹점번호 (수식이 참고)"""
+    ws = wb.create_sheet(_LOOKUP_SHEET)
+    ws["A1"], ws["B1"], ws["D1"], ws["E1"] = "앞4자리", "매입사", "사업자번호|매입사", "가맹점번호"
+    for i, (p, acq) in enumerate(sorted(look.get("prefix", {}).items()), 2):
+        ws.cell(i, 1, p).number_format = "@"
+        ws.cell(i, 2, acq)
+    for i, (k, m) in enumerate(sorted(look.get("merchant", {}).items()), 2):
+        ws.cell(i, 4, k)
+        ws.cell(i, 5, m).number_format = "@"
+    ws.sheet_state = "hidden"
+
+
 def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                    number_format="0", notes=None, cash=None, row_height=None,
                    template=None, font_cfg=None, sum_label="계", sum_label_field=None, drop_trailer=(),
-                   fit_pages=None, fill_pages=False, width_px=None):
+                   fit_pages=None, fill_pages=False, width_px=None, card_lookup=None):
     """template(호텔 양식 경로)가 있으면 양식을 열어 값만 채우고, 없으면 font_cfg로 새로 만든다.
     반환: 경고 목록"""
     if template:
@@ -772,7 +813,9 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                 cell.value = f"={letter(idx[col['formula_of']])}{r}"
                 # 수입일보 누계 = 매출 × 숙박수 (호텔 실제 일보 2026-10-28). 숙박수가 없는 줄(조식·연회 등)은 매출 그대로
                 t = col.get("times")
-                if t in idx and isinstance(rec.get(t), (int, float)):
+                if rec.get("_cum_prev") is not None:  # 거래내역 잔액: 어제까지 잔액 + 오늘 매출
+                    cell.value = f"={rec['_cum_prev']}+{letter(idx[col['formula_of']])}{r}"
+                elif t in idx and isinstance(rec.get(t), (int, float)):
                     cell.value += f"*{letter(idx[t])}{r}"
                 cell.number_format = fmt
                 continue
@@ -798,6 +841,8 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                         cell.number_format = number_format
                 elif rec.get("_note"):
                     cell.value = rec["_note"]
+            if card_lookup:
+                _manual_card_formulas(ws, r, out_cols, idx, letter, card_lookup)
         nxt = records[n + 1] if n + 1 < len(records) else None
         if "_sec" in rec and nxt is not None and nxt.get("_sec") != rec["_sec"]:
             r += 1  # 묶음 끝 → 계 줄 자리 (서식·수식은 아래에서)
@@ -925,7 +970,10 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
         ws.page_setup.blackAndWhite = True
 
     try:
-        _clean_copy(s.ws).save(path)
+        wb_out = _clean_copy(s.ws)
+        if card_lookup:
+            _add_card_lookup_sheet(wb_out, card_lookup)
+        wb_out.save(path)
         _mark_styles_applied(path)
     except PermissionError:
         raise ConversionError(f"결과 파일이 엑셀에서 열려 있습니다. 닫은 뒤 다시 시도해 주세요.\n{path}")
@@ -1163,15 +1211,16 @@ def _nights(arrival, departure):
 
 
 def _nights_so_far(arrival, departure, bdate):
-    """수입일보 숙박수 = 이번 달 들어 영업일자까지 묵은 날 수 (호텔 실제 일보 2026-10-28로 확인:
-    10/26 도착 → 10/28 일보에 3, 8/25 도착 장기 투숙 → 28 = 10/1부터). 날짜를 모르면 None."""
+    """수입일보 숙박수 = 도착일부터 영업일자까지 묵은 날 수 (10/26 도착 → 10/28 일보에 3).
+    사용자 지시 2026-11-01: 누계는 '이번 달 1일부터'가 아니라 **지금까지의 잔액** → 중간 정산한 장기 투숙은
+    객실별 거래내역 파일(read_folio)로 잔액을 구하고, 파일이 없을 때만 이 값을 쓴다. 날짜를 모르면 None."""
     try:
         a = dt.date.fromisoformat(arrival)
     except (TypeError, ValueError):
         return None
     if a > bdate:
         return None
-    start = max(a, bdate.replace(day=1))
+    start = a
     n = (bdate - start).days + 1
     try:  # 오늘 출발 손님이 일보에 남아 있으면 출발일 전날까지만
         d = dt.date.fromisoformat(departure)
@@ -1182,7 +1231,49 @@ def _nights_so_far(arrival, departure, bdate):
     return n
 
 
-def _income_sections(records, bdate, conv, warnings):
+_FOLIO_SIGNATURE = ("영업일자", "room", "항목", "매출", "입금")
+
+
+def read_folio(path):
+    """ERP 객실별 거래내역(영업일자 · Bill# · Room# · 구분# · 항목 · 매출 · 입금 …) → (객실, [(날짜, 매출, 입금)]).
+    거래내역 파일이 아니면 None"""
+    try:
+        rows = read_table(path)
+    except Exception:
+        return None
+    for i, row in enumerate(rows[:10]):
+        heads = [norm(c) for c in row]
+        if all(any(h == k or h.startswith(k) for h in heads) for k in _FOLIO_SIGNATURE):
+            col = lambda k: next(j for j, h in enumerate(heads) if h == k or h.startswith(k))
+            cd, cr, cs, cp = col("영업일자"), col("room"), col("매출"), col("입금")
+            room, out = None, []
+            for r in rows[i + 1:]:
+                d = to_date(r[cd]) if cd < len(r) else ""
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d or ""):
+                    continue  # 맨 아래 합계 줄 등
+                room = room or fmt_room(r[cr], "pad4")
+                out.append((d, to_number(r[cs]) or 0, to_number(r[cp]) or 0))
+            return (room, out) if room else None
+    return None
+
+
+def folio_balance(entries, bdate):
+    """누계 = 어제까지의 잔액 + 오늘 매출 (사용자 지시 2026-11-01, 실제 10/28 일보로 검산:
+    0406 3박 330,000 + 110,000 = 440,000 / 0602 8~9월 정산 뒤 10/1부터 27박 + 오늘 = 2,772,000 / 0604 매일 빌이체로 잔액 0 → 오늘 90,000).
+    반환: (어제까지 잔액, 잔액이 0이 된 뒤 묵은 날 수 + 오늘)"""
+    today = bdate.isoformat()
+    by_day = {}
+    for d, sale, pay in entries:
+        if d < today:
+            by_day[d] = by_day.get(d, 0) + sale - pay
+    bal, nights = 0, 0
+    for d in sorted(by_day):
+        bal += by_day[d]
+        nights = 0 if bal <= 0 else nights + 1  # 정산해서 0이 되면 다시 센다
+    return max(bal, 0), nights + 1
+
+
+def _income_sections(records, bdate, conv, warnings, folios=None):
     """수입일보를 호텔 실제 일보 모양으로 (사용자 지시 2026-10-28, 실제 10/28 일보로 확인).
     - 매출구분(ROOM · Extra-Charge · 1회용품 · 조식 · 연회 …) 묶음을 ERP 순서대로, 묶음마다 계 줄(앞 묶음까지 이어서 합산)
     - 매출 0 줄(CASH·카드·선수금 등)은 뺀다. 객실번호 범위와 상관없이 매출이 잡힌 줄은 모두 (1030 외부 조식 포함)
@@ -1203,7 +1294,7 @@ def _income_sections(records, bdate, conv, warnings):
     if room_kind in groups:  # ROOM 묶음을 맨 앞에
         order.remove(room_kind)
         order.insert(0, room_kind)
-    out, merged, bad = [], [], []
+    out, merged, bad, used, long_no_folio, stale = [], [], [], [], [], []
     for sec, key in enumerate(order):
         rows = groups[key]
         if key == room_kind:
@@ -1218,8 +1309,19 @@ def _income_sections(records, bdate, conv, warnings):
             rows = list(by_room.values())
             for rec in rows:
                 rec["nights"] = _nights_so_far(rec.get("arrival"), rec.get("departure"), bdate)
-                if rec["nights"] is None:
+                if rec.get("room") in (folios or {}):
+                    prev, n = folio_balance(folios[rec["room"]], bdate)
+                    last = max((d for d, _, _ in folios[rec["room"]]), default="")
+                    if last and last < (bdate - dt.timedelta(days=1)).isoformat():
+                        stale.append(f"{rec['room']}(마지막 {last[5:]})")
+                    rec["nights"] = n
+                    if prev != (rec.get("sales") or 0) * (n - 1):
+                        rec["_cum_prev"] = prev  # 요금이 바뀐 적이 있으면 누계 = 어제까지 잔액 + 오늘 매출
+                    used.append(f"{rec['room']}({prev + (rec.get('sales') or 0):,.0f}원)")
+                elif rec["nights"] is None:
                     bad.append(rec.get("room") or "객실 없음")
+                elif rec["nights"] > conv.get("long_stay_days", 7):
+                    long_no_folio.append(f"{rec['room']}({rec['nights']}박)")
         else:
             rows = [dict(r) for r in rows]
             for rec in rows:
@@ -1241,6 +1343,17 @@ def _income_sections(records, bdate, conv, warnings):
         warnings.append("ROOM 매출이 두 줄 이상인 객실은 금액을 더해 한 줄로 넣었습니다: " + ", ".join(sorted(set(merged))))
     if bad:
         warnings.append("도착일을 알 수 없어 숙박수를 비워 둔 객실(노란 칸): " + ", ".join(bad))
+    if used:
+        warnings.append("객실별 거래내역 파일로 누계(현재 잔액)를 계산한 객실: " + ", ".join(used))
+    if folios:
+        extra = sorted(set(folios) - {r.get("room") for r in out})
+        if extra:
+            warnings.append("거래내역 파일은 있지만 오늘 수입일보에 없는 객실(퇴실 등): " + ", ".join(extra))
+    if stale:
+        warnings.append("⚠ 거래내역 파일이 오래되어(어제까지 내역이 없음) 누계가 모자랄 수 있습니다 — 오늘 다시 받아 주세요: " + ", ".join(stale))
+    if long_no_folio:
+        warnings.append("⚠ 장기 투숙인데 객실별 거래내역 파일이 없어 '도착일부터 매일 매출'로 누계를 셌습니다 — "
+                        "중간 정산했으면 틀립니다. 거래내역을 받아 함께 넣어 주세요: " + ", ".join(long_no_folio))
     if len(order) > 1:
         names = [groups[k][0].get("sales_kind") for k in order]
         warnings.append("매출구분별로 묶고 묶음마다 계(앞 묶음까지 합산)를 넣었습니다: " + " → ".join(names))
@@ -1323,7 +1436,72 @@ def _fill_card_rooms(records, lookup, warnings):
         warnings.append("예약 리스트에 없는 Acct#(이미 퇴실한 손님·조식 등 — 직접 입력): " + ", ".join(missing))
 
 
-def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False, room_source=None):
+# ---------------------------------------------------------------- 카드 한벽루 줄 자동 채우기 (사용자 지시 2026-11-01)
+def _prefix4(card_no):
+    d = re.sub(r"\D", "", str(card_no or ""))[:4]
+    return d if len(d) == 4 else None
+
+
+def card_knowledge(erp_records, out_dir, cfg=None):
+    """카드번호 앞 4자리 → 매입사, (사업자번호, 매입사) → 가맹점번호, 호텔·한벽루 사업자번호를 **호텔 PC에서** 익힌다.
+    재료: 오늘 ERP 승인내역 + 결과 폴더의 지난 '카드 승인내역' 파일(근무자가 한벽루 줄에 적은 값 포함).
+    사업자번호·가맹점번호는 저장소(GitHub)에 넣지 않는다는 규칙 → 내 PC 설정(AppData)에만 저장."""
+    know = load_user_settings().get("card_learn") or {}
+    prefixes = {k: dict(v) for k, v in (know.get("prefixes") or {}).items()}
+    merchants = dict(know.get("merchants") or {})
+    biz_count = dict(know.get("biz_count") or {})
+    other_count = dict(know.get("other_biz_count") or {})
+
+    def learn(card_no, biz, acq, merchant, other=False):
+        p, biz, acq, merchant = _prefix4(card_no), clean_text(biz), clean_text(acq), clean_text(merchant)
+        if p and acq:
+            prefixes.setdefault(p, {})
+            prefixes[p][acq] = prefixes[p].get(acq, 0) + 1
+        if biz and acq and merchant:
+            merchants[f"{biz}|{acq}"] = merchant
+        if biz:
+            (other_count if other else biz_count)[biz] = (other_count if other else biz_count).get(biz, 0) + 1
+
+    for rec in erp_records:
+        learn(rec.get("card_no"), rec.get("biz_no"), rec.get("acquirer"), rec.get("merchant_no"))
+    hotel = max(biz_count, key=biz_count.get) if biz_count else None
+    # 지난 결과 파일: 근무자가 직접 적은 한벽루 줄 (Acct# 참고 칸에 '한벽루' 표시)
+    try:
+        files = sorted((f for f in os.listdir(out_dir) if f.startswith("카드 승인내역") and f.endswith(".xlsx")),
+                       reverse=True)[:30]
+    except OSError:
+        files = []
+    for name in files:
+        try:
+            ws = load_workbook(os.path.join(out_dir, name), data_only=True, read_only=True).active
+            rows = list(ws.iter_rows(values_only=True))
+        except Exception:
+            continue
+        head = next((i for i, r in enumerate(rows[:10]) if r and "카드번호" in [clean_text(c) for c in r]), None)
+        if head is None:
+            continue
+        h = [clean_text(c) for c in rows[head]]
+        col = lambda k: h.index(k) if k in h else None
+        cc, cb, ca, cm = col("카드번호"), col("사업자번호"), col("매입사"), col("가맹점번호")
+        cn = next((j for j, x in enumerate(h) if x.startswith("Acct")), None)
+        if None in (cc, cb, ca, cm):
+            continue
+        for r in rows[head + 1:]:
+            get = lambda j: r[j] if j is not None and j < len(r) else None
+            note = clean_text(get(cn))
+            biz = clean_text(get(cb))
+            learn(get(cc), biz, get(ca), get(cm), other="한벽루" in note or bool(hotel and biz and biz != hotel))
+    other_count.pop(hotel, None)
+    know = {"prefixes": prefixes, "merchants": merchants, "biz_count": biz_count, "other_biz_count": other_count}
+    try:
+        save_user_setting("card_learn", know)
+    except ConversionError:
+        pass
+    return {"prefix": {p: max(v, key=v.get) for p, v in prefixes.items()}, "merchant": merchants,
+            "hotel": hotel, "other": max(other_count, key=other_count.get) if other_count else None}
+
+
+def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False, room_source=None, folios=None):
     """kind: income | card | credit | breakfast.
     반환: {'output': 경로, 'count': 건수, 'warnings': [...], 'title': 이름}"""
     cfg = cfg or load_config()
@@ -1336,11 +1514,19 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
     notes = []
     cash = None
 
+    card_lookup = None
     if kind == "income":
-        records = _income_sections(records, bdate, conv, warnings)
+        folio_map = {}
+        for path in folios or ():
+            got = read_folio(path)
+            if got:
+                folio_map[got[0]] = got[1]
+            else:
+                warnings.append(f"객실별 거래내역으로 읽지 못한 파일: {os.path.basename(path)}")
+        records = _income_sections(records, bdate, conv, warnings, folio_map)
         warnings.insert(0, "매출 열은 ERP의 '매출'(부가세 포함 금액)로 채웠습니다.")
         warnings.append("'선/후'는 노란 칸에 직접 입력하세요(카.선 / 현.선 / 후 …). "
-                        "숙박수 = 이번 달 들어 오늘까지 묵은 날 수, 누계 = 매출 × 숙박수(수식) — 숙박수를 고치면 누계도 바뀝니다.")
+                        "누계 = 현재 잔액(정산 뒤 묵은 날 × 매출, 수식) — 숙박수를 고치면 누계도 바뀝니다.")
 
     if kind == "card":
         if room_source and conv.get("room_source"):
@@ -1365,6 +1551,14 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
             if rec.get("card_no"):
                 rec["card_no"] = re.sub(r"x", "X", rec["card_no"], flags=re.I) if "x" in rec["card_no"].lower() else rec["card_no"]
         manual = conv.get("manual_rows") or {}
+        if manual.get("count") and manual.get("auto_fill", True):
+            card_lookup = card_knowledge([r for r in records if not r.get("_manual")], writable_out_dir(out_dir)[0], cfg)
+            card_lookup["fields"] = manual.get("fields", {})
+            if card_lookup["other"]:
+                warnings.append("한벽루 줄: 카드번호 앞 4자리를 적으면 매입사·가맹점번호·구분이 자동으로 채워지고, "
+                                "사업자번호는 한벽루 번호가 기본(목록에서 호텔 번호로 바꿀 수 있음)입니다.")
+            else:
+                warnings.append("한벽루 줄: 한벽루 사업자번호를 아직 모릅니다. 오늘 한 번 직접 적어 저장해 두면 다음부터 자동으로 채워집니다.")
         if manual.get("count"):
             records = records + [{"_manual": True, "_note": manual.get("note", "")} for _ in range(manual["count"])]
             warnings.append(f"아래 노란 빈 줄 {manual['count']}개는 {manual.get('label', 'ERP에 없는 승인 건')}을 "
@@ -1463,7 +1657,8 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
                                sum_label=conv.get("sum_label", "계"), sum_label_field=conv.get("sum_label_field"),
                                drop_trailer=conv.get("drop_trailer", ()),
                                fit_pages=conv.get("fit_pages", cfg.get("fit_pages")),
-                               fill_pages=conv.get("fill_pages", False), width_px=conv.get("width_px"))
+                               fill_pages=conv.get("fill_pages", False), width_px=conv.get("width_px"),
+                               card_lookup=card_lookup)
     return {"output": out_path, "count": len(records), "warnings": warnings, "title": conv["title"]}
 
 
@@ -1851,8 +2046,23 @@ def daily_jobs(folder, business_date, cfg=None):
     names = (cfg.get("daily") or {}).get("names", {})
     mmdd = _parse_date(business_date).strftime("%m%d")
     jobs, notes = [], []
+    # 객실별 거래내역(장기 투숙 잔액): 이름과 상관없이 내용으로 찾는다 (예: 잔액0406.xls, 406_홍길동.xls)
+    named = set(f.values())
+    folios = []
+    try:
+        for name in sorted(os.listdir(folder)):
+            p = os.path.join(folder, name)
+            if p in named or name.startswith("~$") or not name.lower().endswith(_TABLE_EXT):
+                continue
+            if read_folio(p):
+                folios.append(p)
+    except OSError:
+        pass
     if "income" in f:
-        jobs.append(("income", f["income"], None))
+        jobs.append(("income", f["income"], folios or None))
+        if folios:
+            notes.append(f"객실별 거래내역 {len(folios)}개로 장기 투숙 객실의 누계(잔액)를 계산합니다: "
+                         + ", ".join(os.path.basename(p) for p in folios))
     if "card" in f:
         jobs.append(("card", f["card"], f.get("rooms")))
     if "credit" in f:

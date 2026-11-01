@@ -394,7 +394,7 @@ def test_income_sections_like_hotel_report(cfg, tmp_path):
     _, v = _values(res["output"])
     body = [r[:9] for r in v[2:]]
     assert [r[0] for r in body] == ["0302", "0303", None, "0302", None, "1030", None]
-    assert body[0][6] == 28 and body[1][6] == 3  # 8/25 도착 장기 → 10/1부터 28, 10/26 도착 → 3
+    assert body[0][6] == 65 and body[1][6] == 3  # 거래내역이 없으면 도착일부터: 8/25 → 65, 10/26 → 3
     assert body[0][8] == "=H3*G3"
     assert body[2][6:9] == ["계", "=SUM(H3:H4)", "=SUM(I3:I4)"]
     assert body[3][1] == "손님(EXTRA CHARGE)" and body[3][6] is None and body[3][8] == "=H6"
@@ -404,7 +404,7 @@ def test_income_sections_like_hotel_report(cfg, tmp_path):
 
 
 @pytest.mark.parametrize("arr,dep,bd,n", [("2026-10-26", "2026-10-29", "2026-10-28", 3),
-                                          ("2026-08-25", "2026-11-13", "2026-10-28", 28),
+                                          ("2026-08-25", "2026-11-13", "2026-10-28", 65),
                                           ("2026-10-28", "2026-10-29", "2026-10-28", 1),
                                           ("", "2026-10-29", "2026-10-28", None)])
 def test_nights_so_far(arr, dep, bd, n):
@@ -537,7 +537,8 @@ def test_card_manual_rows_for_other_terminal(cfg, tmp_path):
     data = v[2:]
     assert [r[1] for r in data[:1]] == ["1111-XXXX-XXXX-XXXX"] and not any(r[5] == "실패" for r in data)
     manual = [i for i, r in enumerate(data) if r[8] == "한벽루 단말기 (직접 입력)"]
-    assert len(manual) == 4 and all(not any(data[i][:8]) for i in manual)
+    # 빈 줄: 값은 없고 자동 채우기 수식만 (카드번호를 적으면 채워짐)
+    assert len(manual) == 4 and all(not v or str(v).startswith("=") for i in manual for v in data[i][:8])
     assert ws.cell(3 + manual[0], 8).fill.fgColor.rgb.endswith("FFF2B3")
     cash_row, total_row = 3 + manual[-1] + 1, 3 + manual[-1] + 2
     assert v[cash_row - 1][5] == "현금영수증"
@@ -638,3 +639,75 @@ def test_breakfast_count_late_checkin_counted(cfg, tmp_path):
                              str(tmp_path / "out"), BDATE, cfg)
     assert res["inhouse"] == 5 + 1 and res["arrivals"] == 0
     assert any("뒤 체크인한 1객실" in w and "0501" in w for w in res["warnings"])
+
+
+FOLIO_HEAD = ["", "영업일자", "Bill#", "Room#", "구분#", "항목", "매출", "입금", "적요"]
+
+
+def _folio(path, room, days, rate, settle_until=None):
+    """가상 객실별 거래내역: days = [날짜…], settle_until까지는 매일 같은 금액을 빼서(빌이체·정산) 잔액 0"""
+    rows = [FOLIO_HEAD]
+    for d in days:
+        rows.append(["", d, 1, room, "객실", "ROOM", rate, 0, ""])
+        if settle_until and d <= settle_until:
+            rows.append(["", d, 1, room, "객실", "ROOM", -rate, 0, ""])
+    rows.append(["", "", "", "", "", len(days), rate * len(days), 0, ""])
+    return _xlsx(path, rows)
+
+
+def test_folio_balance_running_total(cfg, tmp_path):
+    """누계 = 현재 잔액 (사용자 지시 2026-11-01): 어제까지 잔액 + 오늘 매출, 정산해서 0이 되면 다시 센다.
+    실제 10/28 일보로 검산한 규칙 — 장기(정산 뒤 10/1부터) 28박, 매일 빌이체 객실은 1박."""
+    days = [f"2026-09-{d:02d}" for d in range(25, 31)] + [f"2026-10-{d:02d}" for d in range(1, 29)]
+    room, e = cv.read_folio(_folio(tmp_path / "a.xlsx", "0602", days, 99000, settle_until="2026-09-30"))
+    assert room == "0602" and cv.folio_balance(e, dt.date(2026, 10, 28)) == (27 * 99000, 28)
+    room, e = cv.read_folio(_folio(tmp_path / "b.xlsx", "0604", ["2026-10-27", "2026-10-28"], 90000, "2026-10-28"))
+    assert cv.folio_balance(e, dt.date(2026, 10, 28)) == (0, 1)
+    assert cv.read_folio(_xlsx(tmp_path / "c.xlsx", INCOME)) is None  # 거래내역이 아닌 파일
+
+    def row(room, sales, arr):
+        return ["ROOM", "손님", arr, "2026-11-05", "D/T", "회사", room, "", 0, 0, "", "", 1, 0, 0, 0, 0, sales, 0]
+    inc = [INCOME[0], row("0602", 99000, "2026-09-25"), row("0604", 90000, "2026-10-27"), row("0303", 100000, "2026-10-26"),
+           row("0612", 99000, "2026-09-01")]
+    res = cv.convert_file("income", _xlsx(tmp_path / "수입.xlsx", inc), str(tmp_path / "out"), "2026-10-28", cfg,
+                          folios=[str(tmp_path / "a.xlsx"), str(tmp_path / "b.xlsx")])
+    _, v = _values(res["output"])
+    got = {r[0]: (r[6], r[8]) for r in v[2:6]}
+    assert got["0602"] == (28, "=H4*G4") and got["0604"] == (1, "=H5*G5") and got["0303"] == (3, "=H3*G3")
+    assert any("장기 투숙" in w and "0612" in w for w in res["warnings"])  # 거래내역 없는 장기 투숙은 경고
+
+
+def test_daily_jobs_finds_folios(cfg, tmp_path):
+    d = tmp_path / "ERP원본"
+    d.mkdir()
+    _xlsx(d / "수입1022.xlsx", INCOME)
+    _folio(d / "406_가상손님.xlsx", "0406", ["2026-10-20", "2026-10-21"], 110000)
+    jobs, notes, _ = cv.daily_jobs(str(d), BDATE, cfg)
+    assert jobs[0][0] == "income" and [os.path.basename(p) for p in jobs[0][2]] == ["406_가상손님.xlsx"]
+
+
+def test_card_manual_rows_auto_fill_learned(cfg, tmp_path):
+    """한벽루 줄 자동 채우기 (2026-11-01): 지난 결과 파일에 근무자가 적은 한벽루 줄과 ERP 승인 건에서
+    카드번호 앞 4자리 → 매입사, 사업자번호|매입사 → 가맹점번호, 한벽루 사업자번호를 익혀 수식으로 채운다 (가상 번호)."""
+    out = tmp_path / "out"
+    first = cv.convert_file("card", _xlsx(tmp_path / "c1.xlsx", CARD), str(out), "2026-10-21", cfg)
+    wb = load_workbook(first["output"])
+    ws = wb.active
+    r = next(c.row for c in ws["I"] if c.value == "한벽루 단말기 (직접 입력)")
+    for col, v in zip("BCDEFGH", ["9999-XXXX-XXXX-XXXX", "9000000000", "가상한벽카드", "777", "카드승인", "1", 5000]):
+        ws[f"{col}{r}"] = v  # 근무자가 한벽루 줄을 직접 적어 저장
+    wb.save(first["output"])
+    res = cv.convert_file("card", _xlsx(tmp_path / "c2.xlsx", CARD), str(out), BDATE, cfg)
+    wb2 = load_workbook(res["output"])
+    ws2 = wb2.active
+    r2 = next(c.row for c in ws2["I"] if c.value == "한벽루 단말기 (직접 입력)")
+    assert ws2[f"C{r2}"].value == f'=IF(B{r2}="","","9000000000")'  # 한벽루 사업자번호 기본
+    assert "VLOOKUP(LEFT(B" in ws2[f"D{r2}"].value and "카드목록" in ws2[f"E{r2}"].value
+    look = wb2["카드목록"]
+    assert look.sheet_state == "hidden"
+    table = {look.cell(i, 1).value: look.cell(i, 2).value for i in range(2, look.max_row + 1) if look.cell(i, 1).value}
+    assert table == {"1111": "가상카드", "9999": "가상한벽카드"}
+    merch = {look.cell(i, 4).value: look.cell(i, 5).value for i in range(2, look.max_row + 1) if look.cell(i, 4).value}
+    assert merch["9000000000|가상한벽카드"] == "777" and merch["0000000000|가상카드"] == "123"
+    dvs = [dv for dv in ws2.data_validations.dataValidation if f"C{r2}" in str(dv.sqref)]
+    assert dvs and dvs[0].formula1 == '"9000000000,0000000000"'

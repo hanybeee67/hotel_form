@@ -18,7 +18,7 @@ FILETYPES = [("엑셀/표 파일", "*.xlsx *.xlsm *.xls *.csv *.htm *.html"), ("
 
 # 서류 카드: (종류, 제목, 설명, ERP 메뉴 위치)
 DOCS = [
-    ("income", "수입일보", "ROOM → Extra · 조식 · 연회 묶음별 계 (마지막 계 = ERP 계)\n숙박수 = 이번 달 묵은 날 · 누계 = 매출×숙박수 · 선/후는 노란 칸",
+    ("income", "수입일보", "ROOM → Extra · 조식 · 연회 묶음별 계 (마지막 계 = ERP 계)\n누계 = 현재 잔액 (장기 투숙은 객실별 거래내역 함께 선택) · 선/후는 노란 칸",
      "영업보고서 → 마감일보 → 수입일보 → 엑셀전환"),
     ("card", "카드 · 현금영수증 승인내역", "승인 '성공' 건만 · 한벽루 단말기 빈 줄 4개 · 현금영수증 · 계\n(선택) 객실 예약 리스트를 함께 고르면 객실 자동 채움",
      "① 객실관리 → 카드결제 → 승인 내역조회 → 엑셀전환\n② (선택, 객실 자동 채우기) 객실관리 → 조회 및 출력 → 객실조회"),
@@ -350,7 +350,8 @@ class App(tk.Tk):
                         res = cv.breakfast_count(path, extra, cv.default_out_dir(path, self.cfg), bdate, self.cfg)
                     else:
                         res = cv.convert_file(kind, path, cv.default_out_dir(path, self.cfg), bdate, self.cfg, unique=unique,
-                                              room_source=extra if kind == "card" else None)
+                                              room_source=extra if kind == "card" else None,
+                                              folios=extra if kind == "income" else None)
                     self.jobs.put(("ok", kind, path, res))
                 except cv.ConversionError as e:
                     self.jobs.put(("err", kind, path, str(e)))
@@ -454,12 +455,18 @@ class App(tk.Tk):
         if not path:
             return
         room_source = None
+        if kind == "income":
+            # 장기 투숙 객실의 누계(현재 잔액)용 객실별 거래내역 (선택, 여러 개)
+            room_source = list(filedialog.askopenfilenames(
+                title="(선택) 장기 투숙 객실별 거래내역 파일들 — Ctrl+클릭으로 여러 개. 없으면 [취소]",
+                filetypes=FILETYPES)) or None
         if kind == "card" and self.cfg["converters"]["card"].get("room_source"):
             # 객실 칸 자동 채우기 (선택): 객실 예약 리스트(상태 CHECK IN)의 Acct# → 객실#
             room_source = filedialog.askopenfilename(
                 title="(선택) 객실 자동 채우기 — 객실관리 → 조회 및 출력 → 객실조회 파일. 없으면 [취소]", filetypes=FILETYPES) or None
-        self._log(f"[{title}] {os.path.basename(path)}"
-                  + (f" + 객실 자동 채우기: {os.path.basename(room_source)}" if room_source else ""), "bold")
+        extra = (f" + 거래내역 {len(room_source)}개" if isinstance(room_source, list)
+                 else f" + 객실 자동 채우기: {os.path.basename(room_source)}" if room_source else "")
+        self._log(f"[{title}] {os.path.basename(path)}" + extra, "bold")
         self._start([(kind, path)], room_source)
 
     def run_daily(self):
