@@ -731,11 +731,20 @@ def test_folio_partial_payment(cfg, tmp_path):
     assert any("나누어떨어지지" in w and "0613" in w for w in res["warnings"])
 
 
-def test_folio_wrong_file_warning(cfg, tmp_path):
-    """파일 이름(612_…)과 내용(0602 거래내역)이 다르면 경고 (2026-11-01 실제로 602 내역이 612 이름으로 들어옴)."""
-    days = [f"2026-10-{d:02d}" for d in range(20, 28)]
-    a = _folio(tmp_path / "602_가상A.xlsx", "0602", days, 99000)
-    b = _folio(tmp_path / "612_가상B.xlsx", "0602", days, 99000)
-    res = cv.convert_file("income", _xlsx(tmp_path / "수입.xlsx", INCOME), str(tmp_path / "out"), BDATE, cfg, folios=[a, b])
-    assert any("612호인데 내용은 0602호" in w for w in res["warnings"])
-    assert any("0602호 거래내역이 두 개" in w for w in res["warnings"])
+def test_folio_partner_room(cfg, tmp_path):
+    """같은 회사 동료 객실(612)의 파일에 대표 객실(602) 거래내역이 들어 있으면, 대표 객실의 정산 시점부터 센다 (2026-11-01)."""
+    days = [f"2026-09-{d:02d}" for d in range(20, 31)] + [f"2026-10-{d:02d}" for d in range(1, 28)]
+    a = _folio(tmp_path / "602_가상A.xlsx", "0602", days, 99000, settle_until="2026-09-30")
+    b = _folio(tmp_path / "612_가상B.xlsx", "0602", days, 99000, settle_until="2026-09-30")
+    def row(room, arr):
+        return ["ROOM", "손님", arr, "2026-11-20", "D/T", "회사", room, "", 0, 0, "", "", 1, 0, 0, 0, 0, 99000, 0]
+    res = cv.convert_file("income", _xlsx(tmp_path / "수입.xlsx", [INCOME[0], row("0602", "2026-09-20"), row("0612", "2026-09-22")]),
+                          str(tmp_path / "out"), "2026-10-28", cfg, folios=[a, b])
+    _, v = _values(res["output"])
+    assert (v[2][0], v[2][6]) == ("0602", 28) and (v[3][0], v[3][6]) == ("0612", 28)
+    assert any("0612(동료 0602호 정산 기준 28박)" in w for w in res["warnings"])
+    # 대표 객실이 매일 빌이체(그날 잔액 0)면 동료 객실은 도착일부터 (실제 10/28: 604는 1박, 613은 2박)
+    c = _folio(tmp_path / "613_가상C.xlsx", "0604", ["2026-10-27", "2026-10-28"], 90000, settle_until="2026-10-28")
+    res2 = cv.convert_file("income", _xlsx(tmp_path / "수입2.xlsx", [INCOME[0], row("0613", "2026-10-27")]),
+                           str(tmp_path / "out2"), "2026-10-28", cfg, folios=[c])
+    assert _values(res2["output"])[1][2][6] == 2

@@ -1273,7 +1273,22 @@ def folio_balance(entries, bdate):
     return max(bal, 0), nights + 1
 
 
-def _income_sections(records, bdate, conv, warnings, folios=None):
+def folio_reset_date(entries, bdate):
+    """어제까지 중 잔액이 마지막으로 0(정산)이 된 날 — 없으면 None"""
+    today = bdate.isoformat()
+    by_day = {}
+    for d, sale, pay in entries:
+        if d < today:
+            by_day[d] = by_day.get(d, 0) + sale - pay
+    bal, last = 0, None
+    for d in sorted(by_day):
+        bal += by_day[d]
+        if bal <= 0:
+            last = d
+    return last
+
+
+def _income_sections(records, bdate, conv, warnings, folios=None, partners=None):
     """수입일보를 호텔 실제 일보 모양으로 (사용자 지시 2026-10-28, 실제 10/28 일보로 확인).
     - 매출구분(ROOM · Extra-Charge · 1회용품 · 조식 · 연회 …) 묶음을 ERP 순서대로, 묶음마다 계 줄(앞 묶음까지 이어서 합산)
     - 매출 0 줄(CASH·카드·선수금 등)은 뺀다. 객실번호 범위와 상관없이 매출이 잡힌 줄은 모두 (1030 외부 조식 포함)
@@ -1323,6 +1338,14 @@ def _income_sections(records, bdate, conv, warnings, folios=None):
                         odd.append(f"{rec['room']}(잔액 {prev + rate:,.0f}원, {n}박)")
                     rec["nights"] = n
                     used.append(f"{rec['room']}({prev + (rec.get('sales') or 0):,.0f}원)")
+                elif rec.get("room") in (partners or {}) and rec["nights"] is not None:
+                    # 같은 회사 동료 객실: ERP가 대표 객실 거래내역을 주므로, 대표 객실이 정산한 다음 날부터 센다 (사용자 지시 2026-11-01)
+                    rep_room, reset = partners[rec["room"]]
+                    if reset:
+                        start = max(dt.date.fromisoformat(rec["arrival"]),
+                                    dt.date.fromisoformat(reset) + dt.timedelta(days=1))
+                        rec["nights"] = max(1, (bdate - start).days + 1)
+                    used.append(f"{rec['room']}(동료 {rep_room}호 정산 기준 {rec['nights']}박)")
                 elif rec["nights"] is None:
                     bad.append(rec.get("room") or "객실 없음")
                 elif rec["nights"] > conv.get("long_stay_days", 7):
@@ -1524,7 +1547,7 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
 
     card_lookup = None
     if kind == "income":
-        folio_map = {}
+        folio_map, partners = {}, {}
         for path in folios or ():
             got = read_folio(path)
             if got:
@@ -1532,15 +1555,17 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
                 m = re.match(r"\D*(\d{3,4})(?!\d)", base)
                 named = m and fmt_room(m.group(1), "pad4")
                 if named and named != got[0] and re.fullmatch(r"\d{4}", got[0]):
-                    # 2026-11-01 실제: 같은 회사 동료 객실(612·613·705·710)의 거래내역을 받으면 대표 객실(602·604·406·510) 내역이 그대로 나옴
-                    warnings.append(f"⚠ '{base}' 파일 이름은 {named}호인데 내용은 {got[0]}호 거래내역이라 {named}호에는 쓰지 않았습니다. "
-                                    f"같은 회사 동료 객실이면 ERP에서 {named}호를 골라 {named}호 자신의 거래내역(Room# {named})을 받아 주세요.")
-                if got[0] in folio_map:
-                    warnings.append(f"⚠ {got[0]}호 거래내역이 두 개 들어왔습니다({base}). 같은 파일을 두 번 받은 것인지 확인해 주세요.")
+                    # 2026-11-01 실제: 같은 회사 동료 객실(612·613·705·710)의 거래내역을 받으면 대표 객실(602·604·406·510) 내역이 나옴
+                    # → 동료 객실은 대표 객실이 마지막으로 정산한 다음 날부터 매일 매출로 센다 (사용자 지시 "반영해 줘")
+                    reset = folio_reset_date(got[1], bdate)
+                    if reset and reset >= (bdate - dt.timedelta(days=1)).isoformat():
+                        reset = None  # 대표 객실이 어제까지 매일 빌이체(604처럼) → 동료 객실 정산과는 무관 (실제 10/28: 613은 2박)
+                    partners[named] = (got[0], reset)
+                    continue
                 folio_map[got[0]] = got[1]
             else:
                 warnings.append(f"객실별 거래내역으로 읽지 못한 파일: {os.path.basename(path)}")
-        records = _income_sections(records, bdate, conv, warnings, folio_map)
+        records = _income_sections(records, bdate, conv, warnings, folio_map, partners)
         warnings.insert(0, "매출 열은 ERP의 '매출'(부가세 포함 금액)로 채웠습니다.")
         warnings.append("'선/후'는 노란 칸에 직접 입력하세요(카.선 / 현.선 / 후 …). "
                         "누계 = 현재 잔액(정산 뒤 묵은 날 × 매출, 수식) — 숙박수를 고치면 누계도 바뀝니다.")
