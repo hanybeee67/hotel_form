@@ -1655,8 +1655,48 @@ def find_prev_report(out_dir, prev_date, cfg=None):
     return p if os.path.exists(p) else None
 
 
+def _income_card_payments(path, cfg):
+    """수입일보 ERP의 결제 줄(매출구분 '카드', 매출 0·입금 있음) → [(객실, 금액)] — 카드 승인 건의 객실 찾기용 (2026-11-02)"""
+    conv = dict(cfg["converters"]["income"], required=["room"], require_room=True, room_range=None)
+    try:
+        records, _, _ = _extract(conv, read_table(path))
+    except ConversionError:
+        return []
+    kinds = {norm(k) for k, v in (conv.get("prepost_by_payment") or {}).items() if v == "카.선"} or {norm("카드")}
+    return [(r["room"], r.get("payment")) for r in records
+            if norm(r.get("sales_kind")) in kinds and (r.get("payment") or 0) > 0 and not (r.get("sales") or 0)]
+
+
+def _fill_card_rooms_by_payment(records, payments, warnings):
+    """카드 승인 건 중 객실을 못 정한 건(빈칸·후보 여러 개)을 수입일보 ERP의 '카드' 결제 줄 금액으로 찾는다.
+    같은 금액 결제가 한 객실뿐일 때만 채우고, 쓴 결제는 다시 쓰지 않는다 (예: 퇴실 손님 조식 추가 결제)"""
+    pool = [(fmt_room(room, "strip"), amt) for room, amt in payments]
+    for rec in records:  # 이미 객실이 정해진 건이 쓴 결제는 먼저 뺀다
+        room = rec.get("room") or ""
+        if room and "/" not in room and (room, rec.get("amount")) in pool:
+            pool.remove((room, rec.get("amount")))
+    filled = []
+    todo = [r for r in records if not r.get("_manual") and (not r.get("room") or "/" in (r.get("room") or ""))]
+    for amt in sorted({r.get("amount") for r in todo if r.get("amount")}):
+        recs = [r for r in todo if r.get("amount") == amt]
+        for rec in list(recs):
+            allowed = set(rec["room"].split("/")) if rec.get("room") else None
+            cands = [(r, a) for r, a in pool if a == amt and (allowed is None or r in allowed)]
+            rooms = sorted({r for r, _ in cands})
+            # 같은 금액 결제가 한 객실뿐이거나, 남은 승인 건 수와 결제 건 수가 같으면(예: 440,000원 2건 ↔ 0301·0310) 차례로 채운다
+            if len(rooms) == 1 or (cands and len(cands) == len(recs)):
+                pick = sorted(cands)[0]
+                rec["room"] = pick[0]
+                rec.pop("_yellow", None)
+                pool.remove(pick)
+                recs.remove(rec)
+                filled.append(f"{rec['room']}({amt:,.0f}원)")
+    if filled:
+        warnings.append("수입일보 ERP의 카드 결제 금액으로 객실을 찾아 채웠습니다: " + ", ".join(filled))
+
+
 def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False, room_source=None, folios=None,
-                 prev_report=None):
+                 prev_report=None, income_source=None):
     """kind: income | card | credit | breakfast.
     반환: {'output': 경로, 'count': 건수, 'warnings': [...], 'title': 이름}"""
     cfg = cfg or load_config()
@@ -1704,6 +1744,9 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
     if kind == "card":
         if room_source and conv.get("room_source"):
             _fill_card_rooms(records, _room_lookup(room_source, conv), warnings)
+        if income_source:
+            _fill_card_rooms_by_payment(records, _income_card_payments(income_source, cfg), warnings)
+        if (room_source or income_source) and conv.get("room_source"):
             if conv.get("room_source", {}).get("sort_by_room"):
                 records.sort(key=lambda r: (not r.get("room"), _room_key({"room": (r.get("room") or "").split("/")[0]})))
         if conv.get("cash_footer"):
@@ -1736,7 +1779,7 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
             records = records + [{"_manual": True, "_note": manual.get("note", "")} for _ in range(manual["count"])]
             warnings.append(f"아래 노란 빈 줄 {manual['count']}개는 {manual.get('label', 'ERP에 없는 승인 건')}을 "
                             "직접 적는 칸입니다. 계에 자동으로 더해집니다(안 쓰는 줄은 비워 두세요).")
-        if "room" not in mapped and not room_source:
+        if "room" not in mapped and not (room_source or income_source):
             warnings.insert(0, "ERP 승인내역에는 객실번호가 없고 Acct#만 있습니다. '객실' 열은 비워 두었으니 "
                                "오른쪽 'Acct#' 열을 참고해 직접 입력해 주세요. (Acct#는 인쇄되지 않습니다)")
 
@@ -2210,47 +2253,78 @@ def find_daily_files(folder, business_date, cfg=None):
     return found
 
 
-def daily_jobs(folder, business_date, cfg=None):
-    """오늘 마감 작업 목록 [(종류, 파일, 짝 파일)]과 안내 문구.
-    수입→수입일보, 카드(+객실→객실 자동 채우기)→카드 승인내역, 대외→대외후불,
-    인하+객실(또는 예약)→5번 조식 인원수·호텔 양식 조식명단, 인하만 있으면→4번 조식명단"""
+# 오늘 마감에 쓰는 ERP 파일 (사용자 요청 2026-11-02: 무엇을 넣으면 1~5번이 모두 만들어지는지 + 파일끼리 연결해 빈칸 채우기)
+# (키, 화면 이름, ERP 메뉴, 필수 여부, 쓰는 곳)
+DAILY_SLOTS = [
+    ("income", "수입일보", "영업보고서 → 마감일보 → 수입일보 → 엑셀전환", True,
+     "① 수입일보 (+ 결제 줄로 선/후, ② 카드 객실 찾기)"),
+    ("card", "카드 승인내역", "객실관리 → 카드결제 → 승인 내역조회 → 엑셀전환", True, "② 카드 승인내역"),
+    ("credit", "대외후불 리스트", "영업보고서 → 입금관련 → 대외 후불 리스트", True, "③ 대외후불"),
+    ("inhouse", "IN HOUSE LIST", "영업보고서 → 객실/예약 → Clerk → IN HOUSE LIST", True, "④ 조식명단 · ⑤ 조식 인원수"),
+    ("rooms", "객실조회 (상태 전체)", "객실관리 → 조회 및 출력 → 객실조회", True,
+     "② 카드 객실 채우기 · ⑤ 오늘 도착 손님 조식"),
+    ("prev_report", "어제 수입일보 (선택)", "자동: 결과 폴더의 어제 일보 / 처음 한 번만 수작업 일보를 '일보MMDD'로", False,
+     "① 누계·숙박수·선/후 이어받기"),
+]
+
+
+def daily_plan(folder, business_date, cfg=None, overrides=None):
+    """오늘 마감 파일 계획: {키: 경로 또는 None} + 거래내역 목록. overrides = 화면에서 직접 고른 파일(폴더보다 우선)"""
     cfg = cfg or load_config()
     f = find_daily_files(folder, business_date, cfg)
-    names = (cfg.get("daily") or {}).get("names", {})
+    bdate = _parse_date(business_date)
+    plan = {k: f.get(k) for k, *_ in DAILY_SLOTS}
+    if f.get("reserve") and not plan.get("rooms"):
+        plan["rooms"] = f["reserve"]
+    plan["prev_report"] = find_prev_report(default_out_dir(None, cfg), bdate - dt.timedelta(days=1), cfg)
+    plan.update({k: v for k, v in (overrides or {}).items() if v and k != "folios"})
+    named = {v for v in plan.values() if v}
+    folios = list((overrides or {}).get("folios") or [])
+    if not folios:  # 객실별 거래내역(정산한 객실만, 선택): 이름과 상관없이 내용으로 찾는다
+        try:
+            for name in sorted(os.listdir(folder)):
+                p = os.path.join(folder, name)
+                if p in named or name.startswith("~$") or not name.lower().endswith(_TABLE_EXT):
+                    continue
+                if read_folio(p):
+                    folios.append(p)
+        except OSError:
+            pass
+    plan["folios"] = folios
+    return plan
+
+
+def daily_jobs(folder, business_date, cfg=None, overrides=None):
+    """오늘 마감 작업 목록 [(종류, 파일, 짝 파일들)]과 안내 문구. 파일끼리 연결해 빈칸을 채운다:
+    수입일보 ← 어제 일보(누계·숙박수·선/후) + 거래내역(정산 객실) / 카드 ← 객실조회(Acct#→객실) + 수입일보 ERP 카드 결제(금액→객실)
+    조식 ← IN HOUSE LIST + 객실조회(오늘 도착·이후 체크인) — 객실조회가 없으면 4번 조식명단만"""
+    cfg = cfg or load_config()
+    plan = daily_plan(folder, business_date, cfg, overrides)
     mmdd = _parse_date(business_date).strftime("%m%d")
+    names = (cfg.get("daily") or {}).get("names", {})
     jobs, notes = [], []
-    # 객실별 거래내역(장기 투숙 잔액): 이름과 상관없이 내용으로 찾는다 (예: 잔액0406.xls, 406_홍길동.xls)
-    named = set(f.values())
-    folios = []
-    try:
-        for name in sorted(os.listdir(folder)):
-            p = os.path.join(folder, name)
-            if p in named or name.startswith("~$") or not name.lower().endswith(_TABLE_EXT):
-                continue
-            if read_folio(p):
-                folios.append(p)
-    except OSError:
-        pass
-    if "income" in f:
-        jobs.append(("income", f["income"], folios or None))
-        if folios:
-            notes.append(f"객실별 거래내역 {len(folios)}개로 장기 투숙 객실의 누계(잔액)를 계산합니다: "
-                         + ", ".join(os.path.basename(p) for p in folios))
-    if "card" in f:
-        jobs.append(("card", f["card"], f.get("rooms")))
-    if "credit" in f:
-        jobs.append(("credit", f["credit"], None))
-    if "inhouse" in f:
-        partner = f.get("reserve") or f.get("rooms")
-        jobs.append(("bf_count", f["inhouse"], partner) if partner else ("breakfast", f["inhouse"], None))
-    for key, label in (("income", "수입일보"), ("card", "카드 승인내역"), ("credit", "대외후불"), ("inhouse", "IN HOUSE LIST")):
-        if key not in f:
+    if plan["income"]:
+        jobs.append(("income", plan["income"], {"folios": plan["folios"] or None, "prev_report": plan["prev_report"]}))
+        if plan["folios"]:
+            notes.append(f"객실별 거래내역 {len(plan['folios'])}개로 정산한 객실의 누계를 계산합니다: "
+                         + ", ".join(os.path.basename(p) for p in plan["folios"]))
+    if plan["card"]:
+        jobs.append(("card", plan["card"], {"room_source": plan["rooms"], "income_source": plan["income"]}))
+    if plan["credit"]:
+        jobs.append(("credit", plan["credit"], None))
+    if plan["inhouse"]:
+        jobs.append(("bf_count", plan["inhouse"], plan["rooms"]) if plan["rooms"] else ("breakfast", plan["inhouse"], None))
+    for key, label, *_ in DAILY_SLOTS[:4]:
+        if not plan[key]:
             notes.append(f"'{names.get(key, key)}{mmdd}' 파일이 없어 {label}은(는) 건너뜁니다.")
-    if "card" in f and "rooms" not in f:
-        notes.append(f"'{names.get('rooms')}{mmdd}'(객실조회) 파일이 없어 카드 객실 칸은 비워 둡니다.")
-    if "inhouse" in f and not (f.get("reserve") or f.get("rooms")):
+    if plan["card"] and not plan["rooms"]:
+        notes.append(f"'{names.get('rooms')}{mmdd}'(객실조회) 파일이 없어 카드 객실 칸은 수입일보 결제 금액으로만 찾습니다.")
+    if plan["inhouse"] and not plan["rooms"]:
         notes.append(f"'{names.get('rooms')}{mmdd}' 파일이 없어 조식은 IN HOUSE LIST만으로 조식명단을 만듭니다(도착 예정 손님 빠짐).")
-    return jobs, notes, f
+    if plan["income"] and not plan["prev_report"]:
+        notes.append("어제 수입일보가 없어 누계·숙박수는 도착일부터 셉니다 (처음 한 번 수작업 일보를 '일보MMDD'로 넣어 주세요).")
+    found = {k: v for k, v in plan.items() if k != "folios" and v}
+    return jobs, notes, found
 
 
 def default_business_date(cfg=None, now=None):

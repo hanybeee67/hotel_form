@@ -245,6 +245,13 @@ tools/make_templates.py  호텔 실제 파일(.xls/.xlsx) → 빈 양식 생성 
 - 5번 보완: 객실조회(CHECK IN)에 있는데 IN HOUSE LIST에 없는 객실 = IN HOUSE를 받은 뒤 체크인 → 투숙 중으로 셈 (실제 10/28: 새벽 IN HOUSE + 저녁 객실조회로 50객실, 조식 7객실 추가 → 10/29 아침 22명)
   객실조회가 모두 CHECK IN이면 '도착 예정 손님을 세려면 상태를 전체로 받으라'고 안내
 
+- ✅ **ERP 파일 확인 창 + 파일끼리 연결 (사용자 요청 2026-11-02)** — `DAILY_SLOTS`, `daily_plan`, `daily_jobs(overrides)`, app `DailyDialog`:
+  [오늘 마감 한 번에 ▶] / [ERP 파일 선택] → 창에 필요한 파일마다 ✔/✖·찾은 파일·ERP 메뉴·쓰는 곳 + [선택](폴더 대신 직접 고르기, 영업일자 바뀌면 초기화)
+  + 아래에 만들어질 서류 1~5번. 필요한 파일: 수입·카드·대외·인하·객실(상태 전체) + 선택: 어제 일보(자동)·객실별 거래내역
+  연결: ① 수입일보 ← 어제 일보(누계·숙박수·선/후) + 거래내역 + 오늘 결제 줄(선/후) / ② 카드 ← 객실조회(Acct#→객실) + **수입일보 ERP '카드' 결제 줄(객실·금액)**
+  (`_income_card_payments`, `_fill_card_rooms_by_payment`: 객실조회로 못 정한 건·퇴실 손님 건을 같은 금액 결제로 찾음, 같은 금액 건수가 같으면 차례로)
+  실제 10/28: 카드 8건 모두 객실 채움(객실조회 5 + 결제 금액 3) / ④⑤ 조식 ← IN HOUSE + 객실조회
+
 ## 6-1. 배포 방법 (사용자 확인 2026-10-23)
 - 다운로드: Artifacts 링크가 사용자 화면에서 눌리지 않는 문제(2026-10-23) → 빌드마다 **Releases**(`build-<번호>` 태그, 최신으로 표시)에 `GeoseongClosingTool.zip`을 올림. 안내 주소: https://github.com/hanybeee67/hotel_form/releases/latest
 - 사용자는 GitHub Artifacts의 zip을 **카카오톡(나와의 채팅)** 으로 호텔 PC에 옮겨 실행. exe 단독 전송은 막힐 수 있어 **zip 그대로** 보내도록 안내(`docs/사용법.txt`)

@@ -145,6 +145,113 @@ class DocCard(tk.Frame):
             self.open_link.pack_forget()
 
 
+class DailyDialog(tk.Toplevel):
+    """오늘 마감 ERP 파일 확인 창: 파일마다 ERP 메뉴·찾은 파일(✔/✖)·[선택], 아래에 만들어질 서류 1~5번"""
+
+    def __init__(self, app, folder):
+        super().__init__(app, bg=C["bg"])
+        self.app, self.folder = app, folder
+        self.title("오늘 마감 — ERP 파일 확인")
+        self.transient(app)
+        self.resizable(True, False)
+        names = app.cfg.get("daily", {}).get("names", {})
+        self.mmdd = f"{app.bdate:%m%d}"
+        head = tk.Frame(self, bg=C["head"], padx=18, pady=12)
+        head.pack(fill="x")
+        tk.Label(head, text=f"영업일자 {app.bdate:%Y-%m-%d} ({WEEKDAYS[app.bdate.weekday()]}) 마감 파일", bg=C["head"],
+                 fg="#FFFFFF", font=F(13, True)).pack(anchor="w")
+        tk.Label(head, text=f"ERP에서 엑셀전환한 파일을 바탕화면 ERP원본 폴더에 '이름{self.mmdd}'로 저장하면 자동으로 찾습니다. "
+                            "없거나 다른 파일이면 [선택]", bg=C["head"], fg=C["head_sub"], font=F(9)).pack(anchor="w", pady=(2, 0))
+        body = tk.Frame(self, bg=C["card"], padx=16, pady=10, highlightthickness=1, highlightbackground=C["line"])
+        body.pack(fill="x", padx=14, pady=(12, 0))
+        body.columnconfigure(2, weight=1)
+        self.rows = {}
+        for i, (key, label, menu, required, use) in enumerate(cv.DAILY_SLOTS):
+            icon = tk.Label(body, text="", bg=C["card"], font=F(13, True), width=2)
+            icon.grid(row=i * 2, column=0, rowspan=2, sticky="n", pady=(6, 0))
+            nm = f"{names.get(key, '')}{self.mmdd}" if key != "prev_report" else f"일보{(app.bdate - dt.timedelta(days=1)):%m%d}"
+            tk.Label(body, text=f"{label}", bg=C["card"], fg=C["text"], font=F(10, True), anchor="w").grid(
+                row=i * 2, column=1, sticky="w", pady=(6, 0))
+            file_lbl = tk.Label(body, text="", bg=C["card"], font=F(9), anchor="w")
+            file_lbl.grid(row=i * 2, column=2, sticky="w", padx=(10, 0), pady=(6, 0))
+            tk.Label(body, text=f"파일 이름 '{nm}'  ·  ERP {menu}  →  {use}", bg=C["card"], fg="#9AA3B2", font=F(8),
+                     anchor="w").grid(row=i * 2 + 1, column=1, columnspan=2, sticky="w")
+            FlatButton(body, "선택", lambda k=key, l=label: self.pick(k, l), kind="soft", size=9, padx=12, pady=4).grid(
+                row=i * 2, column=3, rowspan=2, padx=(10, 0), pady=(6, 0))
+            self.rows[key] = (icon, file_lbl, required)
+        i = len(cv.DAILY_SLOTS)
+        self.folio_icon = tk.Label(body, text="", bg=C["card"], font=F(13, True), width=2)
+        self.folio_icon.grid(row=i * 2, column=0, rowspan=2, sticky="n", pady=(6, 0))
+        tk.Label(body, text="객실별 거래내역 (선택)", bg=C["card"], fg=C["text"], font=F(10, True)).grid(
+            row=i * 2, column=1, sticky="w", pady=(6, 0))
+        self.folio_lbl = tk.Label(body, text="", bg=C["card"], font=F(9), anchor="w")
+        self.folio_lbl.grid(row=i * 2, column=2, sticky="w", padx=(10, 0), pady=(6, 0))
+        tk.Label(body, text="중간 정산한 장기 투숙 객실만 · 이름 자유 (폴더에 넣으면 내용으로 자동 인식)  →  ① 누계(잔액)",
+                 bg=C["card"], fg="#9AA3B2", font=F(8), anchor="w").grid(row=i * 2 + 1, column=1, columnspan=2, sticky="w")
+        FlatButton(body, "선택", self.pick_folios, kind="soft", size=9, padx=12, pady=4).grid(
+            row=i * 2, column=3, rowspan=2, padx=(10, 0), pady=(6, 0))
+        self.out_lbl = tk.Label(self, text="", bg=C["bg"], fg=C["text"], font=F(9), justify="left", anchor="w", padx=18,
+                                wraplength=760)
+        self.out_lbl.pack(fill="x", pady=(10, 0))
+        bar = tk.Frame(self, bg=C["bg"], padx=14, pady=12)
+        bar.pack(fill="x")
+        FlatButton(bar, "ERP원본 폴더 열기", app.open_erp_folder, kind="soft", size=10, pady=8).pack(side="left")
+        FlatButton(bar, "다시 찾기", self.refresh, kind="soft", size=10, pady=8).pack(side="left", padx=(8, 0))
+        self.go = FlatButton(bar, "변환 시작  ▶", self.start, size=11, pady=8, padx=24)
+        self.go.pack(side="right")
+        FlatButton(bar, "닫기", self.destroy, kind="ghost", size=10, pady=8).pack(side="right", padx=(0, 8))
+        self.refresh()
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.grab_set()
+
+    def pick(self, key, label):
+        path = filedialog.askopenfilename(parent=self, title=f"[{label}] 파일 선택", filetypes=FILETYPES)
+        if path:
+            self.app.daily_overrides[key] = path
+            self.refresh()
+
+    def pick_folios(self):
+        paths = filedialog.askopenfilenames(parent=self, title="객실별 거래내역 (Ctrl+클릭으로 여러 개)", filetypes=FILETYPES)
+        if paths:
+            self.app.daily_overrides["folios"] = list(paths)
+            self.refresh()
+
+    def refresh(self):
+        plan = cv.daily_plan(self.folder, f"{self.app.bdate:%Y-%m-%d}", self.app.cfg, self.app.daily_overrides)
+        self.plan = plan
+        for key, (icon, lbl, required) in self.rows.items():
+            path = plan.get(key)
+            if path:
+                mine = self.app.daily_overrides.get(key) == path
+                icon.configure(text="✔", fg=C["ok"])
+                lbl.configure(text=os.path.basename(path) + ("  (직접 선택)" if mine else ""), fg=C["ok"])
+            else:
+                icon.configure(text="✖" if required else "–", fg=C["err"] if required else C["sub"])
+                lbl.configure(text="없음" + (" — 폴더에 저장하거나 [선택]" if required else " (없어도 됨)"),
+                              fg=C["err"] if required else C["sub"])
+        n = len(plan["folios"])
+        self.folio_icon.configure(text="✔" if n else "–", fg=C["ok"] if n else C["sub"])
+        self.folio_lbl.configure(text=f"{n}개" if n else "없음 (없어도 됨)", fg=C["ok"] if n else C["sub"])
+        has = lambda k: bool(plan.get(k))
+        lines = [
+            ("① 수입일보", has("income"), "어제 일보 이어받기" if has("prev_report") else "어제 일보 없음 → 도착일부터"),
+            ("② 카드 승인내역", has("card"), "객실 자동 채우기: " + " + ".join(
+                x for x, ok in (("객실조회", has("rooms")), ("수입일보 결제", has("income"))) if ok) if has("rooms") or has("income")
+             else "객실 칸은 직접 입력"),
+            ("③ 대외후불 리스트", has("credit"), ""),
+            ("④·⑤ 조식명단 · 조식 인원수", has("inhouse"), "IN HOUSE + 객실조회" if has("rooms") else "IN HOUSE만 (도착 예정 빠짐)"),
+        ]
+        self.out_lbl.configure(text="만들어질 서류\n" + "\n".join(
+            f"   {'✔' if ok else '✖  (파일 없음)'} {name}" + (f"  —  {note}" if ok and note else "") for name, ok, note in lines))
+        self.go.set_enabled(any(ok for _, ok, _ in lines))
+
+    def start(self):
+        if not self.go.enabled:
+            return
+        self.destroy()
+        self.app.start_daily(self.folder)
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -224,11 +331,11 @@ class App(tk.Tk):
         act = tk.Frame(self, bg=C["bg"])
         act.pack(fill="x", padx=20)
         # 오늘 마감 한 번에: 바탕화면 ERP원본 폴더의 '수입1029'처럼 이름 붙인 파일을 찾아 모두 변환 (2026-10-29)
-        self.daily_btn = FlatButton(act, "오늘 마감 한 번에  (ERP원본 폴더)", self.run_daily, size=11, pady=11)
+        self.daily_btn = FlatButton(act, "오늘 마감 한 번에  ▶", self.run_daily, size=11, pady=11)
         self.daily_btn.pack(side="left", fill="x", expand=True)
+        FlatButton(act, "ERP 파일 선택", self.run_daily, kind="soft", size=10, pady=11).pack(side="left", padx=(10, 0))
         self.all_btn = FlatButton(act, "파일 골라서 변환", self.run_all, kind="soft", size=10, pady=11)
         self.all_btn.pack(side="left", padx=(10, 0))
-        FlatButton(act, "원본 폴더", self.open_erp_folder, kind="soft", size=10, pady=11).pack(side="left", padx=(10, 0))
         self.folder_btn = FlatButton(act, "결과 폴더 열기", self.open_folder, kind="soft", size=10, pady=11)
         self.folder_btn.pack(side="left", padx=(10, 0))
         FlatButton(act, "저장 위치 변경", self.choose_out_dir, kind="soft", size=10, pady=11).pack(
@@ -346,10 +453,13 @@ class App(tk.Tk):
                         continue
                     self.jobs.put(("start", kind, path, None))
                 try:
+                    out = cv.default_out_dir(path, self.cfg)
                     if kind == "bf_count":
-                        res = cv.breakfast_count(path, extra, cv.default_out_dir(path, self.cfg), bdate, self.cfg)
+                        res = cv.breakfast_count(path, extra, out, bdate, self.cfg)
+                    elif isinstance(extra, dict):  # 오늘 마감: 파일끼리 연결 (객실조회·수입일보 결제·어제 일보·거래내역)
+                        res = cv.convert_file(kind, path, out, bdate, self.cfg, unique=unique, **extra)
                     else:
-                        res = cv.convert_file(kind, path, cv.default_out_dir(path, self.cfg), bdate, self.cfg, unique=unique,
+                        res = cv.convert_file(kind, path, out, bdate, self.cfg, unique=unique,
                                               room_source=extra if kind == "card" else None,
                                               folios=extra if kind == "income" else None)
                     self.jobs.put(("ok", kind, path, res))
@@ -470,7 +580,7 @@ class App(tk.Tk):
         self._start([(kind, path)], room_source)
 
     def run_daily(self):
-        """바탕화면 ERP원본 폴더에서 영업일자(MMDD) 파일을 찾아 모두 변환"""
+        """오늘 마감 한 번에: ERP 파일 확인 창 (사용자 요청 2026-11-02 — 어떤 파일이 필요한지 한눈에, 없으면 직접 선택)"""
         if self.busy:
             return
         folder = cv.erp_folder(self.cfg)
@@ -478,23 +588,20 @@ class App(tk.Tk):
             os.makedirs(folder, exist_ok=True)
         except OSError:
             pass
+        if getattr(self, "_daily_date", None) != self.bdate:
+            self.daily_overrides, self._daily_date = {}, self.bdate  # 영업일자가 바뀌면 직접 고른 파일은 초기화
+        DailyDialog(self, folder)
+
+    def start_daily(self, folder):
         bdate = f"{self.bdate:%Y-%m-%d}"
-        jobs, notes, found = cv.daily_jobs(folder, bdate, self.cfg)
-        mmdd = f"{self.bdate:%m%d}"
-        self._log(f"오늘 마감 한 번에: {folder}  (영업일자 {bdate} → 파일 이름 뒤 {mmdd})", "bold")
-        for path in found.values():
-            self._log("   찾음: " + os.path.basename(path), "sub")
+        jobs, notes, found = cv.daily_jobs(folder, bdate, self.cfg, self.daily_overrides)
+        self._log(f"오늘 마감 한 번에 (영업일자 {bdate})", "bold")
+        for key, path in found.items():
+            self._log(f"   {dict((k, l) for k, l, *_ in cv.DAILY_SLOTS).get(key, key)}: {os.path.basename(path)}", "sub")
         for n in notes:
             self._log("   " + n, "warn")
-        if not jobs:
-            names = self.cfg.get("daily", {}).get("names", {})
-            messagebox.showwarning("오늘 마감 한 번에",
-                                   f"ERP원본 폴더에 {mmdd} 파일이 없습니다.\n\n{folder}\n\n"
-                                   "ERP에서 엑셀전환한 파일을 이 폴더에 이렇게 저장해 주세요:\n"
-                                   + ", ".join(f"{v}{mmdd}" for k, v in names.items() if k not in ("reserve", "prev_report"))
-                                   + "\n\n영업일자가 맞는지도 확인하세요.")
-            return
-        self._start(jobs, unique=False)
+        if jobs:
+            self._start(jobs, unique=False)
 
     def open_erp_folder(self):
         folder = cv.erp_folder(self.cfg)

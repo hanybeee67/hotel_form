@@ -623,9 +623,13 @@ def test_find_daily_files(cfg, tmp_path):
     jobs, notes, found = cv.daily_jobs(str(d), BDATE, cfg)
     assert {k: os.path.basename(v) for k, v in found.items()} == {
         "income": "수입1022.xlsx", "card": "카드1022.xlsx", "inhouse": "인하1022.xlsx", "rooms": "객실 1022.xlsx"}
-    assert [(k, os.path.basename(p), os.path.basename(e) if e else None) for k, p, e in jobs] == [
-        ("income", "수입1022.xlsx", None), ("card", "카드1022.xlsx", "객실 1022.xlsx"),
-        ("bf_count", "인하1022.xlsx", "객실 1022.xlsx")]
+    assert [(k, os.path.basename(p)) for k, p, e in jobs] == [
+        ("income", "수입1022.xlsx"), ("card", "카드1022.xlsx"), ("bf_count", "인하1022.xlsx")]
+    # 파일끼리 연결: 카드 ← 객실조회(Acct#→객실) + 수입일보 결제 금액, 조식 ← 객실조회
+    card_extra = jobs[1][2]
+    assert os.path.basename(card_extra["room_source"]) == "객실 1022.xlsx"
+    assert os.path.basename(card_extra["income_source"]) == "수입1022.xlsx"
+    assert os.path.basename(jobs[2][2]) == "객실 1022.xlsx"
     assert any("대외1022" in n for n in notes)
 
 
@@ -682,7 +686,7 @@ def test_daily_jobs_finds_folios(cfg, tmp_path):
     _xlsx(d / "수입1022.xlsx", INCOME)
     _folio(d / "406_가상손님.xlsx", "0406", ["2026-10-20", "2026-10-21"], 110000)
     jobs, notes, _ = cv.daily_jobs(str(d), BDATE, cfg)
-    assert jobs[0][0] == "income" and [os.path.basename(p) for p in jobs[0][2]] == ["406_가상손님.xlsx"]
+    assert jobs[0][0] == "income" and [os.path.basename(p) for p in jobs[0][2]["folios"]] == ["406_가상손님.xlsx"]
 
 
 def test_card_manual_rows_auto_fill_learned(cfg, tmp_path):
@@ -789,3 +793,19 @@ def test_income_prepost_prefill(cfg, tmp_path):
     ws, v = _values(res["output"])
     assert [r[5] for r in v[2:6]] == ["카.선", "온라인결제", None, None]
     assert ws["F5"].fill.fgColor.rgb.endswith("FFF2B3") and not ws["F3"].fill.fgColor.rgb.endswith("FFF2B3")
+
+
+def test_card_room_from_income_payment(cfg, tmp_path):
+    """카드 객실 채우기 2단계 (2026-11-02): 객실조회로 못 정한 건은 수입일보 ERP의 '카드' 결제 줄(객실·금액)로 찾는다."""
+    def card(acct, amt, no):
+        return [BDATE, no, 0, acct, "카드승인", "1111-xxxx-xxxx-xxxx", 0, 0, amt, amt, "0000000000", "성공",
+                "", "가상카드", "1", "", str(no), ""]
+    cards = [CARD[0], card("A9", 130000, 1), card("A3", 440000, 2), card("A3", 440000, 3)]
+    def pay(room, amt):
+        return ["카드", "손님", BDATE, "2026-10-23", "D/T", "회사", room, "", 0, 0, "", "", 1, 0, 0, 0, 0, 0, amt]
+    inc = [INCOME[0], pay("0302", 130000), pay("0301", 440000), pay("0310", 440000),
+           ["ROOM", "손님", BDATE, "2026-10-23", "D/T", "회사", "0301", "", 0, 0, "", "", 1, 0, 0, 0, 0, 440000, 0]]
+    res = cv.convert_file("card", _xlsx(tmp_path / "c.xlsx", cards), str(tmp_path / "out"), BDATE, cfg,
+                          income_source=_xlsx(tmp_path / "inc.xlsx", inc))
+    _, v = _values(res["output"])
+    assert sorted(r[0] for r in v[2:5]) == ["301", "302", "310"]
