@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox
 import converters as cv
 
 VERSION = "v1.2"
+COPYRIGHT = "© 2026 한희. All rights reserved."  # 저작권자 표시 (사용자 지시 2026-11-02, 눈에 띄지 않게 창 오른쪽 아래)
 WEEKDAYS = "월화수목금토일"
 FILETYPES = [("엑셀/표 파일", "*.xlsx *.xlsm *.xls *.csv *.htm *.html"), ("모든 파일", "*.*")]
 
@@ -366,9 +367,12 @@ class App(tk.Tk):
             side="left", padx=(10, 0))
 
         # 상태 표시줄 (맨 아래 고정)
-        self.status = tk.Label(self, text="대기 중", bg=C["bg"], fg=C["sub"], font=F(9), anchor="w", padx=22,
+        foot = tk.Frame(self, bg=C["bg"])
+        foot.pack(side="bottom", fill="x")
+        tk.Label(foot, text=COPYRIGHT, bg=C["bg"], fg="#A3ACBA", font=("맑은 고딕", 8), padx=14).pack(side="right")
+        self.status = tk.Label(foot, text="대기 중", bg=C["bg"], fg=C["sub"], font=F(9), anchor="w", padx=22,
                                pady=3 if compact else 8)
-        self.status.pack(side="bottom", fill="x")
+        self.status.pack(side="left", fill="x", expand=True)
 
         # 작업 기록
         logbox = tk.Frame(self, bg=C["card"], highlightthickness=1, highlightbackground=C["line"])

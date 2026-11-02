@@ -30,6 +30,7 @@ jobs:
         run: >
           pyinstaller --noconfirm --onefile --windowed
           --name GeoseongClosingTool
+          --version-file version_info.txt
           --add-data "config.json;."
           app.py
 
@@ -42,6 +43,7 @@ jobs:
           Copy-Item config.json $out/
           if (Test-Path templates) { Copy-Item templates $out/templates -Recurse }
           Copy-Item docs/사용법.txt $out/
+          Copy-Item LICENSE $out/LICENSE.txt
 
       - name: exe 실행 확인 (5초 동안 창이 꺼지지 않는지)
         shell: pwsh

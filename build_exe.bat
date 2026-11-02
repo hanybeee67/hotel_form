@@ -12,7 +12,7 @@ if errorlevel 1 (
 )
 py -m pip install --upgrade pip
 py -m pip install -r requirements.txt pyinstaller
-py -m PyInstaller --noconfirm --onefile --windowed --name GeoseongClosingTool --add-data "config.json;." app.py
+py -m PyInstaller --noconfirm --onefile --windowed --name GeoseongClosingTool --version-file version_info.txt --add-data "config.json;." app.py
 if errorlevel 1 (
   echo [ERROR] Build failed.
   pause

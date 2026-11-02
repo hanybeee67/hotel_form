@@ -39,6 +39,12 @@
 - 양식(templates/)이 있으면 **양식의 여백을 그대로**(`_fit_a4(keep_margins)`), 조식명단(A4 채우기)만 예외
 - 샘플이 바뀌면 `python tools/make_templates.py --income … --card …`로 templates 갱신 + config `font`/`width` + 위 테스트 값 갱신
 
+## 2-2. 저작권 표시 (사용자 지시 2026-11-02, 저작권자 = **한희**, 눈에 띄지 않게)
+- 화면: 창 맨 아래 오른쪽 작고 연한 글씨 `© 2026 한희. All rights reserved.` (app `COPYRIGHT`)
+- exe 파일 속성(자세히 → 저작권): `version_info.txt` (PyInstaller `--version-file`, build.yml·build_exe.bat)
+- `LICENSE`(배포 폴더에는 LICENSE.txt), `docs/사용법.txt` 맨 끝 한 줄. **엑셀 결과 파일·인쇄물에는 넣지 않음**(호텔 양식과 같아야 함)
+- 버전을 올리면 version_info.txt의 버전도 같이 바꿀 것. 저작권 표시는 빼지 말 것
+
 ## 3. 폴더 구조
 ```
 app.py            GUI. 서류 카드 4개 + 일괄 변환 + 작업 기록 + 결과 열기 (변환은 작업 스레드)

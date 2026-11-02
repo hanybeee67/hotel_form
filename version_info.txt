@@ -1,0 +1,19 @@
+# PyInstaller exe 파일 속성 (Windows: 파일 오른쪽 클릭 → 속성 → 자세히). 저작권자 표시 (2026-11-02)
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers=(1, 2, 0, 0), prodvers=(1, 2, 0, 0), mask=0x3f, flags=0x0, OS=0x40004,
+                    fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[
+    StringFileInfo([
+      StringTable('041204B0', [
+        StringStruct('CompanyName', '한희'),
+        StringStruct('FileDescription', '거성호텔 나이트 마감 도우미'),
+        StringStruct('FileVersion', '1.2'),
+        StringStruct('InternalName', 'GeoseongClosingTool'),
+        StringStruct('LegalCopyright', '© 2026 한희. All rights reserved.'),
+        StringStruct('OriginalFilename', 'GeoseongClosingTool.exe'),
+        StringStruct('ProductName', '거성호텔 나이트 마감 도우미'),
+        StringStruct('ProductVersion', '1.2')])
+    ]),
+    VarFileInfo([VarStruct('Translation', [0x0412, 1200])])
+  ]
+)
