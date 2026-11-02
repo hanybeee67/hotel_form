@@ -809,3 +809,22 @@ def test_card_room_from_income_payment(cfg, tmp_path):
                           income_source=_xlsx(tmp_path / "inc.xlsx", inc))
     _, v = _values(res["output"])
     assert sorted(r[0] for r in v[2:5]) == ["301", "302", "310"]
+
+
+def test_all_reports_sorted_by_room(cfg, tmp_path):
+    """모든 보고서는 객실 순 (사용자 확인 2026-11-02): 수입일보·대외후불·조식명단, 카드도 객실을 아는 건은 객실 순."""
+    def inc(room):
+        return ["ROOM", "손님", BDATE, "2026-10-23", "D/T", "회사", room, "", 0, 0, "", "", 1, 0, 0, 0, 0, 90000, 0]
+    _, v = _values(cv.convert_file("income", _xlsx(tmp_path / "i.xlsx", [INCOME[0], inc("0713"), inc("0301"), inc("0502")]),
+                                   str(tmp_path / "o"), BDATE, cfg)["output"])
+    assert [r[0] for r in v[2:5]] == ["0301", "0502", "0713"]
+    def card(acct, amt, no):
+        return [BDATE, no, 0, acct, "카드승인", "1111-xxxx-xxxx-xxxx", 0, 0, amt, amt, "0000000000", "성공",
+                "", "가상카드", "1", "", str(no), ""]
+    def pay(room, amt):
+        return ["카드", "손님", BDATE, "2026-10-23", "D/T", "회사", room, "", 0, 0, "", "", 1, 0, 0, 0, 0, 0, amt]
+    cards = [CARD[0], card("A1", 30000, 1), card("A2", 10000, 2), card("A3", 20000, 3)]
+    payments = [INCOME[0], pay("0713", 10000), pay("0301", 20000)]
+    _, v = _values(cv.convert_file("card", _xlsx(tmp_path / "c.xlsx", cards), str(tmp_path / "o"), BDATE, cfg,
+                                   income_source=_xlsx(tmp_path / "p.xlsx", payments))["output"])
+    assert [r[0] for r in v[2:5]] == ["301", "713", None]  # 객실 순, 못 찾은 건은 맨 아래

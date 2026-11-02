@@ -1746,7 +1746,7 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
             _fill_card_rooms(records, _room_lookup(room_source, conv), warnings)
         if income_source:
             _fill_card_rooms_by_payment(records, _income_card_payments(income_source, cfg), warnings)
-        if (room_source or income_source) and conv.get("room_source"):
+        if conv.get("room_source"):  # 모든 보고서는 객실 순 (사용자 확인 2026-11-02) — 객실을 못 찾은 건은 맨 아래
             if conv.get("room_source", {}).get("sort_by_room"):
                 records.sort(key=lambda r: (not r.get("room"), _room_key({"room": (r.get("room") or "").split("/")[0]})))
         if conv.get("cash_footer"):
