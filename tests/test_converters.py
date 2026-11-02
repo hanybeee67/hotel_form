@@ -128,8 +128,9 @@ def test_card(cfg, tmp_path):
     assert len(v) == 9  # 제목, 머리글, 성공 1건, 한벽루 빈 줄 4, 현금영수증, 계
     assert v[2][1] == "1111-XXXX-XXXX-XXXX"
     assert v[2][3] == "가상카드"  # 발급사가 아니라 매입사
-    assert v[7][5] == "현금영수증" and v[7][7] == 11000
-    assert v[8][6] == "계" and v[8][7] == "=SUM(H3:H7)+H8"
+    # 11/01 샘플 양식(구분 열 없음, 2026-11-02): 현금영수증·계 라벨은 승인번호 칸, 금액은 G열
+    assert v[7][5] == "현금영수증" and v[7][6] == 11000
+    assert v[8][5] == "계" and v[8][6] == "=SUM(G3:G7)+G8"
     ws = load_workbook(res["output"]).active
     assert ws["A3"].fill.fgColor.rgb.endswith("FFF2B3")  # 객실은 Acct#를 보고 직접 입력하는 노란 칸
 
@@ -206,7 +207,7 @@ def test_template_keeps_hotel_format(cfg, tmp_path, no_templates):
 
 @pytest.mark.parametrize("kind,data,title_size,body_size,font", [
     ("income", INCOME, 26, 18, "굴림"),  # 11/01 수작업 일보 표준 (2026-11-02)
-    ("card", CARD, 26, 16, "굴림"),
+    ("card", CARD, 26, 18, "굴림"),  # 11/01 카드승인내역 샘플 (2026-11-02)
     ("credit", CREDIT, 28, 16, "굴림"),
     ("breakfast", BREAKFAST, 26, 18, "맑은 고딕"),
 ])
@@ -242,7 +243,7 @@ def test_repo_templates(cfg, tmp_path, monkeypatch, kind, data, title_size, body
     fills = re.search(r"<fills.*?</fills>", styles, re.S).group(0)
     assert "FFFFFF\"" not in fills  # 흰색 채우기 없음 (노란 입력 칸만)
     last_row = max(r for r in range(1, ws.max_row + 1) if any(ws.cell(r, c).value is not None for c in range(1, 4)))
-    right = {"income": 9, "card": 8, "credit": 6, "breakfast": 5}[kind]
+    right = {"income": 9, "card": 7, "credit": 6, "breakfast": 5}[kind]
     for r in range(2, last_row + 1):
         for c in range(1, right + 1):
             b = ws.cell(r, c).border
@@ -256,7 +257,7 @@ def test_repo_templates(cfg, tmp_path, monkeypatch, kind, data, title_size, body
     assert ws["B3"].border.bottom.style and ws["B3"].border.bottom.color.rgb == "FF000000"
     assert ws["B3"].fill.fill_type in (None, "none")  # 흰색 채우기 없음
     if kind in ("income", "card", "credit"):  # 금액은 세 자리마다 콤마
-        money = {"income": "H", "card": "H", "credit": "F"}[kind]
+        money = {"income": "H", "card": "G", "credit": "F"}[kind]
         nums = [c for c in ws[money][2:] if isinstance(c.value, (int, float)) or str(c.value).startswith("=")]
         assert nums and all("#,##0" in c.number_format for c in nums), [c.number_format for c in nums]
     if kind == "breakfast":
@@ -535,13 +536,13 @@ def test_card_manual_rows_for_other_terminal(cfg, tmp_path):
     ws, v = _values(res["output"])
     data = v[2:]
     assert [r[1] for r in data[:1]] == ["1111-XXXX-XXXX-XXXX"] and not any(r[5] == "실패" for r in data)
-    manual = [i for i, r in enumerate(data) if r[8] == "한벽루 단말기 (직접 입력)"]
+    manual = [i for i, r in enumerate(data) if r[7] == "한벽루 단말기 (직접 입력)"]
     # 빈 줄: 값은 없고 자동 채우기 수식만 (카드번호를 적으면 채워짐)
-    assert len(manual) == 4 and all(not v or str(v).startswith("=") for i in manual for v in data[i][:8])
-    assert ws.cell(3 + manual[0], 8).fill.fgColor.rgb.endswith("FFF2B3")
+    assert len(manual) == 4 and all(not v or str(v).startswith("=") for i in manual for v in data[i][:7])
+    assert ws.cell(3 + manual[0], 7).fill.fgColor.rgb.endswith("FFF2B3")
     cash_row, total_row = 3 + manual[-1] + 1, 3 + manual[-1] + 2
     assert v[cash_row - 1][5] == "현금영수증"
-    assert v[total_row - 1][7] == f"=SUM(H3:H{cash_row - 1})+H{cash_row}"  # 빈 줄까지 계에 포함
+    assert v[total_row - 1][6] == f"=SUM(G3:G{cash_row - 1})+G{cash_row}"  # 빈 줄까지 계에 포함
 
 
 def test_card_room_fill_from_reservation_list(cfg, tmp_path):
@@ -562,7 +563,7 @@ def test_card_room_fill_from_reservation_list(cfg, tmp_path):
     res = cv.convert_file("card", _xlsx(tmp_path / "c.xlsx", cards), str(tmp_path / "out"), BDATE, cfg,
                           room_source=_xlsx(tmp_path / "rv.xlsx", rv))
     ws, v = _values(res["output"])
-    rows = [(r[0], r[7]) for r in v[2:7]]
+    rows = [(r[0], r[6]) for r in v[2:7]]
     assert rows == [("301/310", 440000), ("307", 198000), ("501", 210000), ("708", 250000), (None, 130000)]
     assert ws["A3"].fill.fgColor.rgb.endswith("FFF2B3") and not ws["A4"].fill.fgColor.rgb.endswith("FFF2B3")
     assert any("A9" in w for w in res["warnings"]) and any("301/310" in w for w in res["warnings"])
@@ -696,14 +697,14 @@ def test_card_manual_rows_auto_fill_learned(cfg, tmp_path):
     first = cv.convert_file("card", _xlsx(tmp_path / "c1.xlsx", CARD), str(out), "2026-10-21", cfg)
     wb = load_workbook(first["output"])
     ws = wb.active
-    r = next(c.row for c in ws["I"] if c.value == "한벽루 단말기 (직접 입력)")
-    for col, v in zip("BCDEFGH", ["9999-XXXX-XXXX-XXXX", "9000000000", "가상한벽카드", "777", "카드승인", "1", 5000]):
+    r = next(c.row for c in ws["H"] if c.value == "한벽루 단말기 (직접 입력)")
+    for col, v in zip("BCDEFG", ["9999-XXXX-XXXX-XXXX", "9000000000", "가상한벽카드", "777", "1", 5000]):
         ws[f"{col}{r}"] = v  # 근무자가 한벽루 줄을 직접 적어 저장
     wb.save(first["output"])
     res = cv.convert_file("card", _xlsx(tmp_path / "c2.xlsx", CARD), str(out), BDATE, cfg)
     wb2 = load_workbook(res["output"])
     ws2 = wb2.active
-    r2 = next(c.row for c in ws2["I"] if c.value == "한벽루 단말기 (직접 입력)")
+    r2 = next(c.row for c in ws2["H"] if c.value == "한벽루 단말기 (직접 입력)")
     assert ws2[f"C{r2}"].value == f'=IF(B{r2}="","","9000000000")'  # 한벽루 사업자번호 기본
     assert "VLOOKUP(LEFT(B" in ws2[f"D{r2}"].value and "카드목록" in ws2[f"E{r2}"].value
     look = wb2["카드목록"]
@@ -828,3 +829,18 @@ def test_all_reports_sorted_by_room(cfg, tmp_path):
     _, v = _values(cv.convert_file("card", _xlsx(tmp_path / "c.xlsx", cards), str(tmp_path / "o"), BDATE, cfg,
                                    income_source=_xlsx(tmp_path / "p.xlsx", payments))["output"])
     assert [r[0] for r in v[2:5]] == ["301", "713", None]  # 객실 순, 못 찾은 건은 맨 아래
+
+
+def test_sample_1101_sizes(cfg, tmp_path, monkeypatch):
+    """수입일보·카드는 11/01 샘플과 열 너비·행 높이·글자 크기·여백이 똑같아야 한다 (사용자 지시 2026-11-02)."""
+    monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
+    inc = load_workbook(cv.convert_file("income", _xlsx(tmp_path / "i.xlsx", INCOME), str(tmp_path / "o"), BDATE, cfg)["output"]).active
+    assert [inc.column_dimensions[c].width for c in "ABCDEFGHI"] == [13.83, 47.66, 31.83, 24.83, 24.83, 20.5, 13.83, 24.83, 24.83]
+    assert inc.row_dimensions[1].height == 50.1 and inc.row_dimensions[3].height == 33.95
+    assert (round(inc.page_margins.left, 3), round(inc.page_margins.top, 3)) == (0.748, 0.394)
+    card = load_workbook(cv.convert_file("card", _xlsx(tmp_path / "c.xlsx", CARD), str(tmp_path / "o"), BDATE, cfg)["output"]).active
+    assert [card.cell(2, c).value for c in range(1, 8)] == ["객실", "카드번호", "사업자번호", "매입사", "가맹점번호", "승인번호", "승인금액"]
+    assert [card.column_dimensions[c].width for c in "ABCDEFG"] == [33.16, 47.16, 28.16, 18.66, 27.16, 23.5, 28.16]
+    assert card.row_dimensions[1].height == 39.95 and card.row_dimensions[3].height == 32.1
+    assert card["A1"].font.sz == 26 and card["B3"].font.sz == 18 and card["A1"].value.startswith("카드승인내역 (")
+    assert (round(card.page_margins.left, 3), round(card.page_margins.top, 3)) == (0.748, 0.984)

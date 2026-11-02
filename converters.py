@@ -602,18 +602,20 @@ def _draw_grid(ws, r0, r1, c0, c1):
                 bottom=thick if r in (r1, r0) else thin)
 
 
-def _fit_a4(ws, hrow):
-    """A4 한 장 너비에 맞추고(세로는 필요한 만큼), 가운데 정렬·쪽마다 제목/머리글 반복·쪽 번호."""
+def _fit_a4(ws, hrow, keep_margins=False):
+    """A4 한 장 너비에 맞추고(세로는 필요한 만큼), 가운데 정렬·쪽마다 제목/머리글 반복·쪽 번호.
+    keep_margins: 호텔 양식(샘플)의 여백을 그대로 둔다 (사용자 지시 2026-11-02: 간격·크기를 샘플과 똑같이)"""
     ps = ws.page_setup
     ps.paperSize = ws.PAPERSIZE_A4
     ps.scale = None
     ps.fitToWidth, ps.fitToHeight = 1, 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.print_options.horizontalCentered = True
-    m = ws.page_margins
-    m.left = m.right = 0.4
-    m.top = m.bottom = 0.5
-    m.header = m.footer = 0.3
+    if not keep_margins:
+        m = ws.page_margins
+        m.left = m.right = 0.4
+        m.top = m.bottom = 0.5
+        m.header = m.footer = 0.3
     ws.print_title_rows = f"1:{hrow}"
     ws.oddFooter.center.text = "&P / &N"
 
@@ -889,7 +891,8 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
     if records and cash is not None:  # 카드 양식: 현금영수증 줄 + 계
         r += 1
         _foot_row(r)
-        _foot(r, idx["kind"], "현금영수증")
+        # 라벨 칸: 구분 열이 있으면 구분, 없으면(11/01 샘플 양식) 승인번호 칸
+        _foot(r, idx["kind"] if "kind" in idx else idx["approval_no"], "현금영수증")
         amt = idx["amount"]
         _foot(r, amt, cash["amount"], None if cash["amount"] is not None else _BLANK_FILL)
         cash_row = r
@@ -957,7 +960,7 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
     right = max(printable[-1], s.frame_last)
     _draw_grid(ws, 1, table_end, 1, right)
     ws.print_area = f"A1:{get_column_letter(right)}{r}"
-    _fit_a4(ws, hrow)
+    _fit_a4(ws, hrow, keep_margins=bool(template) and not fill_pages)
     if fit_pages:
         _fit_pages(ws, hrow, first, table_end, right, fit_pages, fill=bool(fill_pages),
                    min_ratio=fill_pages if isinstance(fill_pages, float) else 0.75, width_px=width_px)

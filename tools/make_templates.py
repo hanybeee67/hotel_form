@@ -26,7 +26,8 @@ TOTAL = {"계", "합계"}
 # 구형 .xls는 xlrd가 인쇄 설정을 읽지 못하므로, 호텔 파일을 엑셀/LibreOffice로 열어 확인한 값을 둔다 (2026-10-23)
 PAGE = {
     "income": {"orientation": "landscape", "margins": (0.748, 0.748, 0.394, 0.394), "titles": True},
-    "card": {"orientation": "landscape", "margins": (0.75, 0.75, 1.0, 1.0), "titles": False},
+    # 카드: 2026-11-02 사용자 지시로 11/01 카드 승인내역 샘플(7열, 구분 열 없음)에서 다시 만듦
+    "card": {"orientation": "landscape", "margins": (0.748, 0.748, 0.984, 0.984), "titles": True},
     "credit": {"orientation": "landscape", "margins": (0.75, 0.75, 1.0, 1.0), "titles": False},
 }
 XLS_LINE = {1: "thin", 2: "medium", 3: "dashed", 4: "dotted", 5: "thick", 6: "double", 7: "hair",
