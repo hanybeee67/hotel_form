@@ -584,8 +584,9 @@ def _is_blank_fill(cell):
 
 
 def _draw_grid(ws, r0, r1, c0, c1):
-    """표 전체에 검은 선을 긋는다: 안쪽은 가는 선, 바깥 테두리는 굵은 선 (어느 화면·인쇄에서도 보이게 색을 지정).
-    노란 입력 칸(선/후·숙박수 등)끼리 맞닿은 경계는 가는 선이 묻혀 안 보인다는 지적(2026-10-23) → 노란 칸 둘레는 굵은 선."""
+    """표 전체에 검은 선을 긋는다: 안쪽은 가는 선, 바깥 테두리(와 제목 아래)는 굵은 선 (어느 화면·인쇄에서도 보이게 색을 지정).
+    노란 입력 칸도 다른 칸과 같은 가는 선 (사용자 지시 2026-11-02: 인쇄하면 노란색은 안 나오는데 그 칸 테두리만 진하게 나옴.
+    2026-10-23에 넣었던 '노란 칸 둘레 굵은 선'은 제거)."""
     thin, thick = Side(style="thin", color=_LINE), Side(style="medium", color=_LINE)
     for r in range(r0, r1 + 1):
         for c in range(c0, c1 + 1):
@@ -594,14 +595,11 @@ def _draw_grid(ws, r0, r1, c0, c1):
                 cell.fill = PatternFill(fill_type=None)  # 흰색 채우기는 필요 없음 (노란 입력 칸만 색 유지)
     for r in range(r0, r1 + 1):
         for c in range(c0, c1 + 1):
-            cell = ws.cell(r, c)
-            me = _is_blank_fill(cell)
-            near = lambda rr, cc: r0 <= rr <= r1 and c0 <= cc <= c1 and _is_blank_fill(ws.cell(rr, cc))
-            cell.border = Border(
-                left=thick if c == c0 or me or near(r, c - 1) else thin,
-                right=thick if c == c1 or me or near(r, c + 1) else thin,
-                top=thick if r in (r0, r0 + 1) or (me and not near(r - 1, c)) or (near(r - 1, c) and not me) else thin,
-                bottom=thick if r in (r1, r0) or (me and not near(r + 1, c)) or (near(r + 1, c) and not me) else thin)
+            ws.cell(r, c).border = Border(
+                left=thick if c == c0 else thin,
+                right=thick if c == c1 else thin,
+                top=thick if r in (r0, r0 + 1) else thin,
+                bottom=thick if r in (r1, r0) else thin)
 
 
 def _fit_a4(ws, hrow):

@@ -112,9 +112,9 @@ def test_income(cfg, tmp_path):
         assert b.left.color.rgb == "FF000000"  # 불투명 검정
     assert ws["A3"].border.left.style == "medium" and ws["I3"].border.right.style == "medium"
     assert ws["E6"].border.bottom.style == "medium" and ws["E4"].border.bottom.style == "thin"
-    # 노란 입력 칸(선/후·숙박수) 둘레는 굵은 선이라 서로 맞닿아도 경계가 보인다
-    assert ws["F3"].border.right.style == "medium" and ws["G3"].border.left.style == "medium"
-    assert ws["F3"].border.left.style == "medium" and ws["E3"].border.right.style == "medium"
+    # 노란 입력 칸도 다른 칸과 같은 가는 선 (2026-11-02: 인쇄 시 노란 칸 테두리만 진하게 나와 제거)
+    assert ws["F3"].border.right.style == "thin" and ws["G3"].border.left.style == "thin"
+    assert ws["F3"].border.left.style == "thin" and ws["E3"].border.right.style == "thin"
     assert ws["F3"].fill.fgColor.rgb == "FFFFF2B3"
     ps = ws.page_setup
     assert int(ps.paperSize) == 9 and ps.orientation == "landscape" and ps.fitToWidth == 1 and ps.fitToHeight == 0  # A4 너비 1장, 줄 높이는 11/01 표준 그대로(장 수 제한 없음)
