@@ -95,12 +95,12 @@ def test_income(cfg, tmp_path):
     assert v[5][6] == "계" and v[5][7] == "=SUM(H3:H5)" and v[5][8] == "=SUM(I3:I5)"
     assert ws["F3"].fill.fgColor.rgb.endswith("FFF2B3")  # 선/후 노란 칸
     dvs = {str(dv.sqref): dv for dv in ws.data_validations.dataValidation}
-    assert dvs["F3:F5"].formula1 == '"카.선,현.선,후"'  # 선/후는 목록에서 고르는 노란 칸 (직접 써도 됨)
+    assert dvs["F3:F5"].formula1 == '"카.선,현.선,후,온라인결제"'  # 선/후는 목록에서 고르는 노란 칸 (직접 써도 됨)
     assert not dvs["F3:F5"].showErrorMessage
     assert [v[2][6], v[3][6]] == [1, 1]  # 숙박수 = 출발일 - 도착일 (자동)
     assert not ws["G3"].fill.fgColor.rgb.endswith("FFF2B3")
     assert ws.page_setup.blackAndWhite  # 노란 칸은 인쇄되지 않게
-    assert ws["B3"].font.name == "굴림" and ws["B3"].font.sz == 18 and ws["A1"].font.sz == 28
+    assert ws["B3"].font.name == "굴림" and ws["B3"].font.sz == 18 and ws["A1"].font.sz == 26  # 11/01 표준
     assert os.path.basename(res["output"]) == "수입일보 2026-10-22.xlsx"
     # 수입일보는 매출이 잡힌 줄은 객실 범위 밖(1030 외부 조식 등)도 모두 집계 (2026-10-28)
     assert v[4][0] == "1030" and v[4][7] == 50000
@@ -117,7 +117,7 @@ def test_income(cfg, tmp_path):
     assert ws["F3"].border.left.style == "medium" and ws["E3"].border.right.style == "medium"
     assert ws["F3"].fill.fgColor.rgb == "FFFFF2B3"
     ps = ws.page_setup
-    assert int(ps.paperSize) == 9 and ps.orientation == "landscape" and ps.fitToWidth == 1 and ps.fitToHeight == 2  # A4 너비 1장 × 최대 2장
+    assert int(ps.paperSize) == 9 and ps.orientation == "landscape" and ps.fitToWidth == 1 and ps.fitToHeight == 0  # A4 너비 1장, 줄 높이는 11/01 표준 그대로(장 수 제한 없음)
     assert ws.print_options.horizontalCentered and ws.print_title_rows == "$1:$2"
 
 
@@ -205,7 +205,7 @@ def test_template_keeps_hotel_format(cfg, tmp_path, no_templates):
 
 
 @pytest.mark.parametrize("kind,data,title_size,body_size,font", [
-    ("income", INCOME, 28, 18, "굴림"),
+    ("income", INCOME, 26, 18, "굴림"),  # 11/01 수작업 일보 표준 (2026-11-02)
     ("card", CARD, 26, 16, "굴림"),
     ("credit", CREDIT, 28, 16, "굴림"),
     ("breakfast", BREAKFAST, 26, 18, "맑은 고딕"),
@@ -332,21 +332,19 @@ def test_names_masked_in_documents(cfg, tmp_path):
 
 
 def test_many_rows_fit_two_a4_pages(cfg, tmp_path, monkeypatch):
-    """객실이 많아도 A4 2장에 들어가게 행 높이를 줄이고, 글자 크기는 그대로."""
+    """수입일보는 객실이 많아도 줄 높이를 11/01 표준(33.95)으로 고정 (2026-11-02: 줄 간격이 같아야 인쇄하기 편함).
+    다른 서류(대외후불 등)는 예전처럼 A4 2장에 들어가게 행 높이를 줄인다."""
     monkeypatch.setattr(cv, "app_dir", lambda: ROOT)  # 실제 호텔 양식 사용
     rows = [INCOME[0]] + [["ROOM", f"손님{i}", BDATE, "2026-10-23", "D/T", "회사", f"{300 + (i % 13) + 1 + (i // 13) * 100:04d}",
                            "", 0, 0, "", "", 1, 0, 0, 0, 0, 99000, 0] for i in range(65)]
-    src = _xlsx(tmp_path / "수입.xlsx", rows)
-    ws, v = _values(cv.convert_file("income", src, str(tmp_path / "out"), BDATE, cfg)["output"])
-    assert ws.row_dimensions[3].height < 39 and ws["B3"].font.sz == 18
-    assert ws.page_setup.fitToHeight == 2
-    # 높이 합이 A4 가로 2장(너비 맞춤 배율 기준) 안에 들어가는지 계산으로 확인
-    total_w = sum(cv._col_points(ws.column_dimensions[c].width) for c in "ABCDEFGHI")
-    scale = min(1, (842 - 0.8 * 72) / total_w)
-    used = sum(ws.row_dimensions[r].height or 15 for r in range(3, ws.max_row + 1))
-    budget = 2 * ((595 - 72) / scale - (57 + 39))
-    # 행 높이를 줄여 들어가거나, 글자가 잘리지 않는 최소 높이(18pt×1.3)까지 줄였으면 나머지는 엑셀의 2장 맞춤이 축소
-    assert used <= budget + 1 or all(ws.row_dimensions[r].height <= 18 * 1.3 + 0.01 for r in range(3, 60))
+    ws, _ = _values(cv.convert_file("income", _xlsx(tmp_path / "수입.xlsx", rows), str(tmp_path / "out"), BDATE, cfg)["output"])
+    assert ws.row_dimensions[1].height == 50.1 and all(ws.row_dimensions[r].height == 33.95 for r in range(2, 68))
+    assert ws["B3"].font.sz == 18 and ws.page_setup.fitToWidth == 1 and ws.page_setup.fitToHeight == 0
+    head = CREDIT[0]
+    many = [head] + [["가상호텔", "ROOM", 1, f"{300 + (i % 13) + 1 + (i // 13) * 100:04d}", "대외후불", BDATE, f"손님{i}",
+                      BDATE, "2026-10-23", "가상여행", 10000, ""] for i in range(65)]
+    ws2, _ = _values(cv.convert_file("credit", _xlsx(tmp_path / "후불.xlsx", many), str(tmp_path / "out"), BDATE, cfg)["output"])
+    assert ws2.page_setup.fitToHeight == 2 and ws2.row_dimensions[3].height < 39.95
 
 
 @pytest.mark.parametrize("remark,ok,pax", [
@@ -397,9 +395,10 @@ def test_income_sections_like_hotel_report(cfg, tmp_path):
     assert body[0][6] == 65 and body[1][6] == 3  # 거래내역이 없으면 도착일부터: 8/25 → 65, 10/26 → 3
     assert body[0][8] == "=H3*G3"
     assert body[2][6:9] == ["계", "=SUM(H3:H4)", "=SUM(I3:I4)"]
-    assert body[3][1] == "손님(EXTRA CHARGE)" and body[3][6] is None and body[3][8] == "=H6"
+    # 11/01 표준: 이름 그대로, 거래처 칸에 매출구분
+    assert body[3][1] == "손님" and body[3][2] == "Extra-Charge" and body[3][6] is None and body[3][8] == "=H6"
     assert body[4][6:9] == ["계", "=H5+SUM(H6:H6)", "=I5+SUM(I6:I6)"]
-    assert body[5][1] == "외부(조식)" and body[6][7] == "=H7+SUM(H8:H8)"
+    assert body[5][1] == "외부" and body[5][2] == "조식" and body[6][7] == "=H7+SUM(H8:H8)"
     assert any("0인 줄" in w for w in res["warnings"])
 
 
@@ -777,3 +776,16 @@ def test_income_carries_previous_report(cfg, tmp_path):
     _, v2 = _values(res2["output"])
     assert (v2[2][0], v2[2][6], v2[2][8]) == ("0301", 6, "=H3*G3")
     assert any("일보1021" in w for w in res2["warnings"])
+
+
+def test_income_prepost_prefill(cfg, tmp_path):
+    """선/후 미리 채우기 (2026-11-02): 오늘 결제 줄(카드→카.선, CASH→현.선, 대외후불→온라인결제), 계속 묵는 손님은 어제 값.
+    서식은 11/01 수작업 일보 표준(제목 50.1 · 줄 33.95)."""
+    def row(kind, room, sales, pay=0, arr="2026-10-22"):
+        return [kind, "손님", arr, "2026-10-25", "D/T", "회사", room, "", 0, 0, "", "", 1, 0, 0, 0, 0, sales, pay]
+    rows = [INCOME[0], row("ROOM", "0301", 100000), row("ROOM", "0302", 90000), row("ROOM", "0303", 90000),
+            row("ROOM", "0304", 90000), row("카드", "0301", 0, 100000), row("대외후불", "0302", 0, 90000)]
+    res = cv.convert_file("income", _xlsx(tmp_path / "수입.xlsx", rows), str(tmp_path / "out"), BDATE, cfg)
+    ws, v = _values(res["output"])
+    assert [r[5] for r in v[2:6]] == ["카.선", "온라인결제", None, None]
+    assert ws["F5"].fill.fgColor.rgb.endswith("FFF2B3") and not ws["F3"].fill.fgColor.rgb.endswith("FFF2B3")

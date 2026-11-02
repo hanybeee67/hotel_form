@@ -856,7 +856,7 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                              (c.get("fill_if_empty") and any(rec.get(c["field"]) in ("", None) for rec in records))
                              for c in out_cols)
     for i, col in enumerate(out_cols):
-        if col.get("field") is not None or not records:
+        if not records or (col.get("field") is not None and not col.get("choices")):
             continue
         rng = f"{letter(i)}{first}:{letter(i)}{last}"
         if col.get("choices"):
@@ -1296,16 +1296,21 @@ def _report_rows(path, md):
     if head[:2] == b"PK":
         wb_v = load_workbook(path, data_only=True)
         wb_f = load_workbook(path)
-        pick = next((n for n in wb_v.sheetnames if md in str(wb_v[n]["A1"].value or "")), None)
-        name = pick or wb_v.active.title
+        act = wb_v.active.title
+        pick = act if md in str(wb_v[act]["A1"].value or "") else \
+            next((n for n in reversed(wb_v.sheetnames) if md in str(wb_v[n]["A1"].value or "")), None)
+        name = pick or act
         wv, wf = wb_v[name], wb_f[name]
         return [[(wv.cell(r, c).value, wf.cell(r, c).value) for c in range(1, wv.max_column + 1)]
                 for r in range(1, wv.max_row + 1)]
     import xlrd
     book = xlrd.open_workbook(path)
     sheets = book.sheets()
-    sh = next((x for x in sheets if x.nrows and md in str(x.cell_value(0, 0))), None) \
-        or next((x for x in sheets if x.sheet_visible and getattr(x, "sheet_selected", 0)), None) or sheets[0]
+    # 선택된(마지막으로 작업한) 시트가 그 날짜면 그것 — 같은 이름 시트가 여러 개일 수 있음 (2026-11-02 실제: '1101'과 '1101 ')
+    sel = [x for x in sheets if getattr(x, "sheet_selected", 0)]
+    sh = next((x for x in sel if x.nrows and md in str(x.cell_value(0, 0))), None) \
+        or next((x for x in reversed(sheets) if x.nrows and md in str(x.cell_value(0, 0))), None) \
+        or (sel[0] if sel else sheets[0])
     return [[(sh.cell_value(r, c), sh.cell_value(r, c)) for c in range(sh.ncols)] for r in range(sh.nrows)]
 
 
@@ -1320,7 +1325,8 @@ def read_prev_report(path, prev_date):
     if hi is None:
         return {}
     h = [norm(v) for v, _ in rows[hi]]
-    c_room, c_arr, c_n, c_s, c_cum = (h.index(k) if k in h else None for k in ("객실", "도착일", "숙박수", "매출", "누계"))
+    c_room, c_arr, c_n, c_s, c_cum, c_pp = (h.index(k) if k in h else None
+                                            for k in ("객실", "도착일", "숙박수", "매출", "누계", norm("선/후")))
     if None in (c_room, c_n, c_s, c_cum):
         return {}
     from openpyxl.utils import column_index_from_string
@@ -1349,7 +1355,8 @@ def read_prev_report(path, prev_date):
         if cum is None or n is None:
             continue
         arr = to_date(r[c_arr][0]) if c_arr is not None else ""
-        out[room] = (arr, int(n), sales or 0, int(cum) if float(cum).is_integer() else cum)
+        pp = clean_text(r[c_pp][0]) if c_pp is not None else ""
+        out[room] = (arr, int(n), sales or 0, int(cum) if float(cum).is_integer() else cum, pp)
     return out
 
 
@@ -1361,6 +1368,17 @@ def _income_sections(records, bdate, conv, warnings, folios=None, partners=None,
     - 다른 묶음: 투숙객명 옆에 (EXTRA CHARGE)/(조식) 같은 표시, 숙박수 빈칸, 누계 = 매출"""
     room_kind = norm(conv.get("room_kind", "ROOM"))
     labels = {norm(k): v for k, v in conv.get("kind_labels", {}).items()}
+    # 선/후 미리 채우기 (2026-11-02): 오늘 결제 줄(매출 0, 입금 있음)의 구분 → 카드 '카.선', CASH '현.선', 대외후불 '온라인결제'
+    pay_map = {norm(k): v for k, v in (conv.get("prepost_by_payment") or {}).items()}
+    paid = {}  # 객실 → [(구분, 결제 금액)]
+    for rec in records:
+        lab = pay_map.get(norm(rec.get("sales_kind")))
+        if lab and rec.get("room") and (rec.get("payment") or 0) > 0 and not (rec.get("sales") or 0):
+            paid.setdefault(rec["room"], []).append((lab, rec["payment"]))
+
+    def paid_label(rec):
+        """그 줄 매출 이상을 결제한 건이 있을 때만 선결제로 본다 (조식 13,000원 카드 결제로 객실까지 '카.선'이 되지 않게)"""
+        return next((lab for lab, amt in paid.get(rec.get("room"), ()) if amt >= (rec.get("sales") or 0)), None)
     zero = [r for r in records if not (r.get("sales") or 0)]
     order, groups = [], {}
     for rec in records:
@@ -1406,7 +1424,9 @@ def _income_sections(records, bdate, conv, warnings, folios=None, partners=None,
                 elif rec.get("room") in (prev_rep or {}) and (not prev_rep[rec["room"]][0]
                                                                or prev_rep[rec["room"]][0] == rec.get("arrival")):
                     # 어제 일보 이어받기: 누계 = 어제 누계 + 오늘 매출, 숙박수 = 어제 + 1 (같은 손님 = 도착일이 같을 때만)
-                    _, pn, _, pcum = prev_rep[rec["room"]]
+                    _, pn, _, pcum, pp = prev_rep[rec["room"]]
+                    if pp:
+                        rec["prepost"] = pp  # 계속 묵는 손님은 선/후도 어제 일보 그대로 (오늘 결제보다 우선)
                     rate = rec.get("sales") or 0
                     rec["nights"] = pn + 1
                     if pcum != rate * pn:
@@ -1427,6 +1447,12 @@ def _income_sections(records, bdate, conv, warnings, folios=None, partners=None,
         else:
             rows = [dict(r) for r in rows]
             for rec in rows:
+                rec["nights"] = None
+                rec["_no_fill"] = True
+                if conv.get("extra_kind_in_company"):
+                    # 11/01 수작업 일보(사용자가 정한 표준, 2026-11-02): 이름은 그대로, 거래처 칸에 매출구분(Extra-Charge·조식·연회)
+                    rec["company"] = rec.get("sales_kind") or rec.get("company")
+                    continue
                 lab = labels.get(key, rec.get("sales_kind"))
                 base = rec.get("guest") or ""
                 if norm(lab) not in norm(base):  # '[[외부 조식]] 가상객실'처럼 이미 구분이 들어 있으면 그대로
@@ -1435,6 +1461,9 @@ def _income_sections(records, bdate, conv, warnings, folios=None, partners=None,
                     rec["guest"] = f"{base}({lab})"
                 rec["nights"] = None
                 rec["_no_fill"] = True
+        for rec in rows:
+            if not rec.get("prepost"):
+                rec["prepost"] = paid_label(rec)
         rows.sort(key=_room_key)
         for rec in rows:
             rec["_sec"] = sec
