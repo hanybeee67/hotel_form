@@ -18,24 +18,24 @@ FILETYPES = [("엑셀/표 파일", "*.xlsx *.xlsm *.xls *.csv *.htm *.html"), ("
 
 # 서류 카드: (종류, 제목, 설명, ERP 메뉴 위치)
 DOCS = [
-    ("income", "수입일보", "ROOM → Extra · 조식 · 연회 묶음별 계 (마지막 계 = ERP 계)\n누계 = 현재 잔액 (장기 투숙은 객실별 거래내역 함께 선택) · 선/후는 노란 칸",
+    ("income", "수입일보", "객실 순 · 묶음별 계 (마지막 계 = ERP 계)\n누계 = 현재 잔액 · 선/후 자동 채움",
      "영업보고서 → 마감일보 → 수입일보 → 엑셀전환"),
-    ("card", "카드 · 현금영수증 승인내역", "승인 '성공' 건만 · 한벽루 단말기 빈 줄 4개 · 현금영수증 · 계\n(선택) 객실 예약 리스트를 함께 고르면 객실 자동 채움",
-     "① 객실관리 → 카드결제 → 승인 내역조회 → 엑셀전환\n② (선택, 객실 자동 채우기) 객실관리 → 조회 및 출력 → 객실조회"),
-    ("credit", "대외후불 리스트", "객실 순 정렬 · 금액 합계\n원본 합계와 자동 대조",
+    ("card", "카드 · 현금영수증 승인내역", "승인 '성공' 건만 · 객실 자동 채움\n한벽루 빈 줄 4개 · 현금영수증 · 계",
+     "① 객실관리 → 카드결제 → 승인 내역조회\n② (선택) 객실관리 → 조회 및 출력 → 객실조회"),
+    ("credit", "대외후불 리스트", "객실 순 · 금액 합계\n원본 합계와 자동 대조",
      "영업보고서 → 입금관련 → 대외 후불 리스트"),
-    ("breakfast", "조식명단", "비고의 '조식/조포' 객실만 301~713 순서대로 ('룸온리' 제외)\n오늘 날짜 · 맨 아래 인원 합계",
+    ("breakfast", "조식명단", "'조식/조포' 객실만 (룸온리 제외)\n객실 순 · 맨 아래 인원 합계",
      "영업보고서 → 객실/예약 → Clerk → IN HOUSE LIST"),
 ]
 # 5번: 조식 인원수 — 파일 두 개(IN HOUSE LIST + 객실 예약 리스트)를 합쳐 내일 아침 인원만 센다 (2026-10-27)
 BF_COUNT = ("bf_count", "조식 인원수 (내일 아침)",
-            "체크인한 손님(IN HOUSE LIST) + 오늘 도착 예정 손님(객실 예약 리스트) → 내일 아침 인원 + 호텔 양식 조식명단",
-            "IN HOUSE LIST 와 객실 예약 리스트(오늘 도착) 두 파일을 차례로 선택")
+            "체크인한 손님 + 오늘 도착할 손님 → 내일 아침 조식 인원과 조식명단",
+            "IN HOUSE LIST → 객실조회(또는 객실 예약 리스트) 두 파일을 차례로 선택")
 
 # ---------------------------------------------------------------- 디자인
 C = {
-    "bg": "#F3F5F9", "card": "#FFFFFF", "line": "#E2E6EE", "head": "#1F2A44", "head_sub": "#AEB8CF",
-    "text": "#1F2937", "sub": "#6B7280", "accent": "#2F6FEB", "accent_hover": "#2559C4",
+    "bg": "#F3F5F9", "card": "#FFFFFF", "line": "#D5DBE5", "head": "#1F2A44", "head_sub": "#D3DAEA",
+    "text": "#111827", "sub": "#374151", "hint": "#5B6474", "accent": "#2F6FEB", "accent_hover": "#2559C4",
     "soft": "#EAF1FE", "soft_hover": "#D7E5FD", "ok": "#15803D", "warn": "#B45309", "err": "#B91C1C",
     "ok_bg": "#E8F6EC", "warn_bg": "#FEF3E2", "err_bg": "#FDECEC", "disabled": "#C7CDD8",
 }
@@ -49,8 +49,18 @@ else:
     MONO = "DejaVu Sans Mono"
 
 
-def F(size, bold=False):
-    return (FONT, size, "bold") if bold else (FONT, size)
+# 글자 크기 배율 (사용자 요청 2026-11-02: 글씨가 작아 읽기 힘듦 → 기본 1.35배, 화면 위 [가-]/[가+]로 조절·기억)
+UI_SCALE = max(1.0, min(1.9, float(cv.load_user_settings().get("ui_scale", 1.35))))
+
+
+def S(size):
+    """배율을 적용한 글자 크기 (가장 작은 글씨도 11pt 이상)"""
+    return max(11, round(size * UI_SCALE))
+
+
+def F(size, bold=False, *extra):
+    style = " ".join((["bold"] if bold else []) + list(extra))
+    return (FONT, S(size), style) if style else (FONT, S(size))
 
 
 def enable_dpi_awareness():
@@ -105,11 +115,11 @@ class FlatButton(tk.Label):
 class DocCard(tk.Frame):
     """서류 한 종류를 나타내는 카드: 번호 배지 · 제목 · 설명 · 상태 · 버튼."""
 
-    def __init__(self, master, index, kind, title, desc, menu, on_run, on_open):
+    def __init__(self, master, index, kind, title, desc, menu, on_run, on_open, compact=False):
         super().__init__(master, bg=C["card"], highlightthickness=1, highlightbackground=C["line"])
         self.kind, self.on_open, self.output = kind, on_open, None
         tk.Frame(self, bg=BADGE[kind], width=5).pack(side="left", fill="y")
-        body = tk.Frame(self, bg=C["card"], padx=16, pady=14)
+        body = tk.Frame(self, bg=C["card"], padx=16, pady=8 if compact else 14)
         body.pack(side="left", fill="both", expand=True)
 
         top = tk.Frame(body, bg=C["card"])
@@ -119,16 +129,18 @@ class DocCard(tk.Frame):
         tk.Label(top, text=title, bg=C["card"], fg=C["text"], font=F(12, True)).pack(side="left", padx=(8, 0))
 
         tk.Label(body, text=desc, bg=C["card"], fg=C["sub"], font=F(9), justify="left",
+                 wraplength=int((300 if kind != "bf_count" else 760) * UI_SCALE),
                  anchor="w").pack(fill="x", pady=(8, 2))
-        tk.Label(body, text=("" if kind == "bf_count" else "ERP  ") + menu, bg=C["card"], fg="#9AA3B2",
-                 font=F(8), anchor="w", justify="left", wraplength=330 if kind != "bf_count" else 700).pack(fill="x")
+        if not compact:  # 작은 화면에서는 ERP 메뉴 안내 줄을 숨긴다 (오늘 마감 확인 창에도 있음)
+            tk.Label(body, text=("" if kind == "bf_count" else "ERP  ") + menu, bg=C["card"], fg=C["hint"], font=F(8),
+                     anchor="w", justify="left", wraplength=int((300 if kind != "bf_count" else 760) * UI_SCALE)).pack(fill="x")
 
         bottom = tk.Frame(body, bg=C["card"])
         bottom.pack(fill="x", pady=(12, 0))
         self.status = tk.Label(bottom, text="대기 중", bg=C["bg"], fg=C["sub"], font=F(9), padx=8, pady=3)
         self.status.pack(side="left")
         self.open_link = tk.Label(bottom, text="결과 열기", bg=C["card"], fg=C["accent"],
-                                  font=(FONT, 9, "underline"), cursor="hand2")
+                                  font=F(9, False, "underline"), cursor="hand2")
         self.open_link.bind("<Button-1>", lambda e: self.output and self.on_open(self.output))
         self.button = FlatButton(bottom, "파일 선택", lambda: on_run(kind), kind="soft", size=9, padx=14, pady=6)
         self.button.pack(side="right")
@@ -174,7 +186,7 @@ class DailyDialog(tk.Toplevel):
                 row=i * 2, column=1, sticky="w", pady=(6, 0))
             file_lbl = tk.Label(body, text="", bg=C["card"], font=F(9), anchor="w")
             file_lbl.grid(row=i * 2, column=2, sticky="w", padx=(10, 0), pady=(6, 0))
-            tk.Label(body, text=f"파일 이름 '{nm}'  ·  ERP {menu}  →  {use}", bg=C["card"], fg="#9AA3B2", font=F(8),
+            tk.Label(body, text=f"파일 이름 '{nm}'  ·  ERP {menu}  →  {use}", bg=C["card"], fg=C["hint"], font=F(8),
                      anchor="w").grid(row=i * 2 + 1, column=1, columnspan=2, sticky="w")
             FlatButton(body, "선택", lambda k=key, l=label: self.pick(k, l), kind="soft", size=9, padx=12, pady=4).grid(
                 row=i * 2, column=3, rowspan=2, padx=(10, 0), pady=(6, 0))
@@ -187,11 +199,11 @@ class DailyDialog(tk.Toplevel):
         self.folio_lbl = tk.Label(body, text="", bg=C["card"], font=F(9), anchor="w")
         self.folio_lbl.grid(row=i * 2, column=2, sticky="w", padx=(10, 0), pady=(6, 0))
         tk.Label(body, text="중간 정산한 장기 투숙 객실만 · 이름 자유 (폴더에 넣으면 내용으로 자동 인식)  →  ① 누계(잔액)",
-                 bg=C["card"], fg="#9AA3B2", font=F(8), anchor="w").grid(row=i * 2 + 1, column=1, columnspan=2, sticky="w")
+                 bg=C["card"], fg=C["hint"], font=F(8), anchor="w").grid(row=i * 2 + 1, column=1, columnspan=2, sticky="w")
         FlatButton(body, "선택", self.pick_folios, kind="soft", size=9, padx=12, pady=4).grid(
             row=i * 2, column=3, rowspan=2, padx=(10, 0), pady=(6, 0))
         self.out_lbl = tk.Label(self, text="", bg=C["bg"], fg=C["text"], font=F(9), justify="left", anchor="w", padx=18,
-                                wraplength=760)
+                                wraplength=int(760 * UI_SCALE))
         self.out_lbl.pack(fill="x", pady=(10, 0))
         bar = tk.Frame(self, bg=C["bg"], padx=14, pady=12)
         bar.pack(fill="x")
@@ -260,9 +272,10 @@ class App(tk.Tk):
         # Windows 화면 배율(125%·150%)에 맞춰 창 크기도 키운다
         k = max(1.0, self.winfo_fpixels("1i") / 96)
         # 작은 화면(노트북 768px 등)에서도 아래가 잘리지 않게 화면 높이에 맞춘다
-        h = min(int(900 * k), self.winfo_screenheight() - int(80 * k))
-        self.geometry(f"{int(900 * k)}x{h}")
-        self.minsize(int(820 * k), int(700 * k))
+        w = min(int(1080 * UI_SCALE * k), self.winfo_screenwidth() - int(40 * k))
+        h = min(int(760 * UI_SCALE * k), self.winfo_screenheight() - int(80 * k))
+        self.geometry(f"{w}x{h}")
+        self.minsize(min(w, int(900 * k)), min(h, int(640 * k)))
         self.last_dir = None
         self.busy = False
         self.jobs = queue.Queue()
@@ -286,20 +299,30 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------ 화면 구성
     def _build(self):
-        head = tk.Frame(self, bg=C["head"], padx=24, pady=16)
+        # 화면 높이가 낮으면(노트북 768px 등) 간단히 보기: 카드의 ERP 메뉴 줄·여백을 줄여 작업 기록이 보이게
+        compact = self.winfo_screenheight() < 820 * UI_SCALE * max(1.0, self.winfo_fpixels("1i") / 96)
+        head = tk.Frame(self, bg=C["head"], padx=24, pady=8 if compact else 16)
         head.pack(fill="x")
         left = tk.Frame(head, bg=C["head"])
         left.pack(side="left")
         tk.Label(left, text="거성호텔 나이트 마감 도우미", bg=C["head"], fg="#FFFFFF",
                  font=F(17, True)).pack(anchor="w")
-        tk.Label(left, text="오아시스 ERP 엑셀 → 호텔 마감 양식으로 자동 변환", bg=C["head"],
-                 fg=C["head_sub"], font=F(9)).pack(anchor="w", pady=(2, 0))
-        tk.Label(head, text=VERSION, bg=C["head"], fg=C["head_sub"], font=F(9)).pack(side="right", anchor="n")
+        if not compact:
+            tk.Label(left, text="오아시스 ERP 엑셀 → 호텔 마감 양식으로 자동 변환", bg=C["head"],
+                     fg=C["head_sub"], font=F(9)).pack(anchor="w", pady=(2, 0))
+        right = tk.Frame(head, bg=C["head"])
+        right.pack(side="right", anchor="center")
+        tk.Label(right, text=f"글자 크기 {round(UI_SCALE * 100)}%", bg=C["head"], fg=C["head_sub"], font=F(9)).pack(side="left")
+        FlatButton(right, "가−", lambda: self.change_scale(-0.1), kind="head", size=10, padx=10, pady=4).pack(
+            side="left", padx=(8, 0))
+        FlatButton(right, "가+", lambda: self.change_scale(0.1), kind="head", size=12, padx=10, pady=2).pack(
+            side="left", padx=(4, 0))
+        tk.Label(right, text=VERSION, bg=C["head"], fg=C["head_sub"], font=F(9)).pack(side="left", padx=(14, 0))
 
         # 영업일자
-        bar = tk.Frame(self, bg=C["card"], padx=24, pady=12, highlightthickness=1,
+        bar = tk.Frame(self, bg=C["card"], padx=24, pady=4 if compact else 12, highlightthickness=1,
                        highlightbackground=C["line"])
-        bar.pack(fill="x", padx=20, pady=(16, 0))
+        bar.pack(fill="x", padx=20, pady=(8 if compact else 16, 0))
         tk.Label(bar, text="영업일자", bg=C["card"], fg=C["text"], font=F(11, True)).pack(side="left")
         FlatButton(bar, "◀", lambda: self._shift(-1), kind="ghost", size=11, padx=8, pady=2).pack(
             side="left", padx=(14, 0))
@@ -313,17 +336,18 @@ class App(tk.Tk):
 
         # 서류 카드 2×2
         grid = tk.Frame(self, bg=C["bg"])
-        grid.pack(fill="x", padx=20, pady=(14, 0))
-        grid.columnconfigure((0, 1), weight=1, uniform="col")
+        grid.pack(fill="x", padx=20, pady=(8 if compact else 14, 0))
+        grid.columnconfigure((0, 1, 2), weight=1, uniform="col")
         self.cards = {}
+        # 글씨를 키우면서 한 줄에 3개 (①②③ / ④ + ⑤ 넓게) — 화면 높이를 덜 차지하도록
         for n, (kind, title, desc, menu) in enumerate(DOCS):
-            card = DocCard(grid, n + 1, kind, title, desc, menu, self.run_single, open_path)
-            card.grid(row=n // 2, column=n % 2, sticky="nsew", padx=(0 if n % 2 == 0 else 7, 7 if n % 2 == 0 else 0),
-                      pady=(0, 14))
+            card = DocCard(grid, n + 1, kind, title, desc, menu, self.run_single, open_path, compact)
+            card.grid(row=n // 3, column=n % 3, sticky="nsew", padx=(0 if n % 3 == 0 else 6, 0 if n % 3 == 2 else 6),
+                      pady=(0, 12))
             self.cards[kind] = card
         kind, title, desc, menu = BF_COUNT
-        card = DocCard(grid, len(DOCS) + 1, kind, title, desc, menu, lambda _k: self.run_bf_count(), open_path)
-        card.grid(row=len(DOCS) // 2, column=0, columnspan=2, sticky="nsew", pady=(0, 14))
+        card = DocCard(grid, len(DOCS) + 1, kind, title, desc, menu, lambda _k: self.run_bf_count(), open_path, compact)
+        card.grid(row=1, column=1, columnspan=2, sticky="nsew", padx=(6, 0), pady=(0, 12))
         card.button.configure(text="파일 2개 선택")
         self.cards[kind] = card
 
@@ -343,12 +367,12 @@ class App(tk.Tk):
 
         # 상태 표시줄 (맨 아래 고정)
         self.status = tk.Label(self, text="대기 중", bg=C["bg"], fg=C["sub"], font=F(9), anchor="w", padx=22,
-                               pady=8)
+                               pady=3 if compact else 8)
         self.status.pack(side="bottom", fill="x")
 
         # 작업 기록
         logbox = tk.Frame(self, bg=C["card"], highlightthickness=1, highlightbackground=C["line"])
-        logbox.pack(fill="both", expand=True, padx=20, pady=(14, 0))
+        logbox.pack(fill="both", expand=True, padx=20, pady=(8 if compact else 14, 0))
         lt = tk.Frame(logbox, bg=C["card"], padx=14, pady=8)
         lt.pack(fill="x")
         tk.Label(lt, text="작업 기록", bg=C["card"], fg=C["text"], font=F(10, True)).pack(side="left")
@@ -367,8 +391,29 @@ class App(tk.Tk):
         sb.pack(side="right", fill="y")
         for tag in ("ok", "warn", "err", "sub"):
             self.log.tag_configure(tag, foreground=C[tag])
-        self.log.tag_configure("time", foreground="#9AA3B2", font=(MONO, 8))
+        self.log.tag_configure("time", foreground=C["hint"], font=(MONO, S(8)))
         self.log.tag_configure("bold", font=F(9, True))
+
+    def change_scale(self, delta):
+        """글자 크기 조절 (화면 위 [가−]/[가+]) — 바로 적용하고 다음 실행 때도 기억"""
+        global UI_SCALE
+        new = round(max(1.0, min(1.9, UI_SCALE + delta)), 2)
+        if self.busy or new == UI_SCALE:
+            return
+        UI_SCALE = new
+        try:
+            cv.save_user_setting("ui_scale", new)
+        except cv.ConversionError:
+            pass
+        text = self.log.get("1.0", "end-1c")
+        for w in self.winfo_children():
+            w.destroy()
+        self._build()
+        self._refresh_date()
+        self.log.configure(state="normal")
+        self.log.insert("end", text + ("\n" if text else ""))
+        self.log.see("end")
+        self.log.configure(state="disabled")
 
     # ------------------------------------------------------------ 영업일자
     def _refresh_date(self):
