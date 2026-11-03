@@ -691,10 +691,24 @@ def _fit_pages(ws, hrow, first, last, right, pages, fill=False, min_ratio=0.75, 
     ps.fitToWidth, ps.fitToHeight = 1, n
 
 
+def _wrapped_lines(ws, r, c, right):
+    """칸 글자가 몇 줄로 그려지는지 어림 (병합 칸은 병합 너비, 한글은 숫자 약 1.8자 폭).
+    2026-11-03: 조식명단 행이 많아 칸 높이가 낮아지자 표 아래 안내 문구(한/영, 줄바꿈 포함)가 잘림 → 줄바꿈된 줄 수까지 셈"""
+    text = str(ws.cell(r, c).value or "")
+    if text.startswith("="):  # 수식(합계 =SUM…)은 결과 숫자만 보인다
+        return 1
+    size = ws.cell(r, c).font.sz or 11
+    c1 = next((m.max_col for m in ws.merged_cells.ranges if m.min_row == r and m.min_col == c), c)
+    width = sum(ws.column_dimensions[get_column_letter(k)].width or 8.43 for k in range(c, min(c1, right) + 1))
+    cap = max(1.0, width * 11 / size * 0.95)
+    units = lambda t: sum(1.8 if ord(ch) > 0x2E80 else 1.0 for ch in t)
+    return sum(max(1, -(-units(line) // cap)) for line in text.split("\n"))
+
+
 def _row_floor(ws, r, right):
     """글자가 잘리지 않는 최소 행 높이"""
     size = max((ws.cell(r, c).font.sz or 11) for c in range(1, right + 1))
-    lines = max(str(ws.cell(r, c).value or "").count("\n") + 1 for c in range(1, right + 1))
+    lines = max(_wrapped_lines(ws, r, c, right) for c in range(1, right + 1))
     return size * 1.3 * lines
 
 
@@ -1101,12 +1115,31 @@ def _parse_date(s):
         raise ConversionError("영업일자를 YYYY-MM-DD 형식으로 입력해 주세요. 예) 2026-10-23")
 
 
-def _bf_people(remark, conv):
+# 근무자가 ERP 비고(또는 고객명)에 적는 단체 표시 '단체이름/방 갯수/인원수' (사용자 지시 2026-11-03)
+# 예: '가상협회/17/30', '가상협회 / 17실 / 30명'. 날짜(2026/11/01)와 헷갈리지 않게 이름은 글자로 시작·끝나야 함
+_GROUP_NOTE = re.compile(r"([가-힣A-Za-z(][^/\n\r]*?[가-힣A-Za-z)])\s*/\s*(\d{1,3})\s*(?:실|개|룸|객실|방)?\s*/\s*"
+                         r"(\d{1,4})\s*(?:명|인)?(?![\d/~.\-])")
+
+
+def group_note(*texts):
+    """'단체이름/방 갯수/인원수' 표시를 찾으면 (이름, 방 수, 인원), 없으면 None"""
+    for t in texts:
+        for m in _GROUP_NOTE.finditer(str(t or "")):
+            rooms, pax = int(m.group(2)), int(m.group(3))
+            if 1 <= rooms <= 200 and rooms <= pax <= 1000:
+                return m.group(1).strip(), rooms, pax
+    return None
+
+
+def _bf_people(remark, conv, guest=None):
     """비고 문구로 조식 대상 여부와 조식 인원을 판단. (대상여부, 인원 또는 None, 판단 이유)
     '조식불포함'·'조식X'·'룸온리'처럼 조식이 없는 표현을 먼저 걸러 낸다 (2026-10-26: 실제 47명인데 59명으로 집계된 문제)."""
     t = remark or ""
     if re.search(conv["bf_exclude_regex"], t, re.I):
         return False, None, "룸온리·조식 불포함"
+    g = group_note(t, guest)
+    if g:  # '단체이름/방 갯수/인원수' → 단체 전체 조식 인원 (객실별 인원은 호출한 쪽에서, 모자라면 '단체 추가' 줄)
+        return True, None, f"조식 포함(단체 {g[2]}명, {g[1]}실, {g[0]})"
     if re.search(conv["bf_include_regex"], t, re.I):
         # 인원: '1인 조포', '2인 조식 포함', '조식 2인', '조식2명' → 조식 바로 앞뒤의 숫자만 쓴다.
         # 비고의 다른 'N인'은 세지 않는다: '2인 1실 조식 추가 비용 13,000원'은 추가요금 안내이지 조식 인원이 아님
@@ -1158,15 +1191,20 @@ def _check_group_totals(records, warnings):
     for rec in records:
         m = re.search(r"단체 (\d+)명", rec.get("_why") or "")
         if m and rec.get("_bf", True):
-            g = groups.setdefault(int(m.group(1)), [0, 0, {}])
+            g = groups.setdefault((int(m.group(1)), rec.get("_why")), [0, 0, {}])
             g[0] += 1
             g[1] += rec.get("pax") or 0
             name = (rec.get("guest") or "").strip()
             g[2][name] = g[2].get(name, 0) + 1
     extras = []
-    for n, (rooms, pax, names) in groups.items():
+    for (n, why), (rooms, pax, names) in groups.items():
         same = "일치" if pax == n else f"다름 — 확인 필요"
         name = max(names, key=names.get) if names else "단체"
+        stated = re.search(r"(\d+)실, (.+)\)$", why or "")
+        if stated:  # 근무자가 적은 '단체이름/방 갯수/인원수'
+            name = stated.group(2)
+            if int(stated.group(1)) != rooms:
+                warnings.append(f"⚠ 단체 '{name}': 적힌 방 갯수 {stated.group(1)}실과 명단의 객실 {rooms}실이 다릅니다 — 확인해 주세요")
         if pax < n:
             extras.append({"room": "단체", "guest": f"{name} 추가", "pax": n - pax,
                            "_extra": True, "_bf": True, "_guess": False, "_why": f"단체 비고 {n}명 - 객실별 {pax}명"})
@@ -1831,7 +1869,7 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
             if has_col:
                 ok, n, why = _is_breakfast(rec.get("breakfast"), conv["no_breakfast_values"]), None, "조식 열"
             else:
-                ok, n, why = _bf_people(rec.get("remark"), conv)
+                ok, n, why = _bf_people(rec.get("remark"), conv, rec.get("guest"))
             if not ok:
                 reasons[why] = reasons.get(why, 0) + 1
                 continue
@@ -1929,7 +1967,7 @@ def _bf_rows(conv, bf_conv, path, what):
         if has_col:
             rec["_bf"], n, rec["_why"] = _is_breakfast(rec.get("breakfast"), bf_conv["no_breakfast_values"]), None, "조식 열"
         else:
-            rec["_bf"], n, rec["_why"] = _bf_people(rec.get("remark"), bf_conv)
+            rec["_bf"], n, rec["_why"] = _bf_people(rec.get("remark"), bf_conv, rec.get("guest"))
         rec["_guess"] = False
         if n is not None:
             rec["pax"] = n

@@ -875,3 +875,19 @@ def test_breakfast_group_extra_row(cfg, tmp_path, monkeypatch):
     res = cv.breakfast_count(_xlsx(tmp_path / "ih.xlsx", INHOUSE), _xlsx(tmp_path / "rv.xlsx", rv),
                              str(tmp_path / "out"), BDATE, cfg)
     assert res["total"] == res["inhouse"] + res["arrivals"] + 7 and "단체 추가 인원 7명" in res["warnings"][0]
+
+
+def test_breakfast_group_note_rooms_people(cfg, tmp_path, monkeypatch):
+    """근무자가 ERP 비고에 '단체이름/방 갯수/인원수'를 적으면 단체 전체 조식 인원으로 반영 (사용자 지시 2026-11-03, 가상 단체)."""
+    monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
+    assert cv.group_note("가상협회/3/7") == ("가상협회", 3, 7)
+    assert cv.group_note("가상협회 / 3실 / 7명") == ("가상협회", 3, 7)
+    assert cv.group_note("2026/11/01 입금") is None and cv.group_note("가상손님2026/11/01~") is None
+    head = BREAKFAST[0]
+    rows = [head] + [[i, "가", "", "가상협회/4/7\n현장 결제", "가상협회", f"030{i}", 1, 0] for i in (2, 3, 4)]
+    res = cv.convert_file("breakfast", _xlsx(tmp_path / "bf.xlsx", rows), str(tmp_path / "out"), BDATE, cfg)
+    _, v = _values(res["output"])
+    body = [r for r in v[2:] if r[0] and r[0] != "합계" and not str(r[0]).startswith("조식")]
+    assert body[-1] == ("단체", "가상협회 추가", 4, None)[:len(body[-1])] or (body[-1][0], body[-1][2]) == ("단체", 4)
+    assert sum(r[2] for r in body) == 7
+    assert any("적힌 방 갯수 4실" in w for w in res["warnings"])  # 방 수가 다르면 확인 요청
