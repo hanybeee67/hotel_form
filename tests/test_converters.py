@@ -844,3 +844,12 @@ def test_sample_1101_sizes(cfg, tmp_path, monkeypatch):
     assert card.row_dimensions[1].height == 39.95 and card.row_dimensions[3].height == 32.1
     assert card["A1"].font.sz == 26 and card["B3"].font.sz == 18 and card["A1"].value.startswith("카드승인내역 (")
     assert (round(card.page_margins.left, 3), round(card.page_margins.top, 3)) == (0.748, 0.984)
+
+
+@pytest.mark.parametrize("raw,shown", [
+    ("가상회사 주간-홍길동", "홍0동"), ("주간-홍길동", "홍0동"), ("야간_김철", "김0"), ("(주간)홍길동", "홍0동"),
+    ("주간-홍길동/야간-김철", "홍0동/김0"), ("주간-정*영", "정0영"), ("진양그룹-Noah", "진양그룹-Noah"), ("가상회사 주간", "가상회사 주간"),
+])
+def test_breakfast_name_label_stripped(raw, shown):
+    """조식명단: '회사 주간-이름'처럼 꼬리표가 붙은 이름은 순수한 한국 이름만, 가운데는 0 (사용자 지시 2026-11-03, 가상 이름)."""
+    assert cv.mask_korean_name(raw) == shown

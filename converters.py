@@ -1182,6 +1182,26 @@ def is_korean_person_name(name):
     return len(s) < 4 or s.startswith(_TWO_CHAR_SURNAMES)
 
 
+# 이름 앞에 붙은 근무조·직책 같은 꼬리표 (이름으로 보지 않음)
+_LABEL_WORDS = {"주간", "야간", "오전", "오후", "새벽", "직원", "사원", "팀장", "과장", "부장", "차장", "대리", "실장", "기사",
+                "인솔", "가이드", "장기", "단기", "객실", "조식", "본사", "현장", "외부"}
+
+
+def korean_person_part(name):
+    """'가상회사 주간-홍길동', '야간_김철', '(주간)홍길동'처럼 회사·근무조 꼬리표 뒤에 한국 이름이 붙어 있으면 그 이름만.
+    사용자 지시 2026-11-03: 장기 투숙 회사 직원 이름이 '주간-000'으로 들어감 → 순수한 한국 이름만 조식명단에.
+    마지막 낱말이 한국 이름(ERP가 *로 가린 이름 포함)일 때만, 아니면 None (진양그룹-Noah는 그대로)."""
+    parts = [p for p in re.split(r"[\s\-_:()\[\]·.~]+", (name or "").strip()) if p]
+    if len(parts) < 2:
+        return None
+    last = parts[-1]
+    if last in _LABEL_WORDS:
+        return None
+    if is_korean_person_name(last) or _ERP_MASKED.fullmatch(last):
+        return last
+    return None
+
+
 def mask_korean_name(name, mark="0"):
     """개인정보 보호 (사용자 지시 2026-10-26): 한국인 이름만 가운데 글자를 0으로.
     3자 홍길동→홍0동, 외자 2자 김철→김0, 4자는 두 글자 성만 남궁민수→남00수.
@@ -1194,7 +1214,12 @@ def mask_korean_name(name, mark="0"):
     if _ERP_MASKED.fullmatch(s):
         return re.sub(r"[*＊]", mark, s)
     if not is_korean_person_name(s):
-        return name
+        person = korean_person_part(s)
+        if not person:
+            return name
+        s = person  # '가상회사 주간-홍길동' → '홍길동'만 (사용자 지시 2026-11-03)
+    if _ERP_MASKED.fullmatch(s):
+        return re.sub(r"[*＊]", mark, s)
     if len(s) == 2:
         return s[0] + mark
     return s[0] + mark * (len(s) - 2) + s[-1]
