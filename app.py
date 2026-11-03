@@ -717,7 +717,7 @@ class App(tk.Tk):
         if not folder:
             return
         folder = os.path.normpath(folder)
-        if os.path.basename(folder) != "마감결과":
+        if os.path.basename(folder) not in ("마감결과", "마감파일"):  # 공유폴더 '마감파일'은 그대로 (2026-11-03)
             folder = os.path.join(folder, "마감결과")
         try:
             cv.save_user_setting("output_dir", folder)

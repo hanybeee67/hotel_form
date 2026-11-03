@@ -274,7 +274,9 @@ def test_output_folder_is_program_folder(cfg, tmp_path, monkeypatch):
     """결과는 원본 옆이 아니라 프로그램(exe) 폴더 안의 '마감결과'에 모인다 (한희 폴더)."""
     prog = tmp_path / "한희"
     monkeypatch.setattr(cv, "app_dir", lambda: str(prog))
-    assert cv.default_out_dir(str(tmp_path / "다운로드" / "erp.xlsx"), cfg) == str(prog / "마감결과")
+    # 사용자 지시 2026-11-03: 기본 결과 폴더 = 프론트 공유폴더 '마감파일' (config output_dir), 빈칸이면 프로그램 폴더\마감결과
+    assert cfg["output_dir"].startswith("\\\\") and cfg["output_dir"].endswith("마감파일")
+    assert cv.default_out_dir(str(tmp_path / "다운로드" / "erp.xlsx"), {**cfg, "output_dir": ""}) == str(prog / "마감결과")
     assert cv.default_out_dir(None, {**cfg, "output_dir": "결과모음"}) == str(prog / "결과모음")
     assert cv.default_out_dir(None, {**cfg, "output_dir": str(tmp_path / "X")}) == str(tmp_path / "X")
 
@@ -304,6 +306,7 @@ def test_error_log(tmp_path, monkeypatch):
 def test_chosen_save_folder_wins(cfg, tmp_path, monkeypatch):
     """바탕화면에서 실행해도 '저장 위치 변경'으로 고른 한희 폴더에 결과가 모인다 (설정은 내 PC에 기억)."""
     monkeypatch.setattr(cv, "app_dir", lambda: str(tmp_path / "바탕화면"))
+    cfg = {**cfg, "output_dir": ""}
     assert cv.default_out_dir(None, cfg) == str(tmp_path / "바탕화면" / "마감결과")
     cv.save_user_setting("output_dir", str(tmp_path / "공용" / "한희" / "마감결과"))
     assert cv.load_user_settings()["output_dir"].endswith("마감결과")
