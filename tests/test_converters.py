@@ -853,3 +853,25 @@ def test_sample_1101_sizes(cfg, tmp_path, monkeypatch):
 def test_breakfast_name_label_stripped(raw, shown):
     """조식명단: '회사 주간-이름'처럼 꼬리표가 붙은 이름은 순수한 한국 이름만, 가운데는 0 (사용자 지시 2026-11-03, 가상 이름)."""
     assert cv.mask_korean_name(raw) == shown
+
+
+def test_breakfast_group_extra_row(cfg, tmp_path, monkeypatch):
+    """단체 비고 '30명 조식 포함'인데 객실마다 1명으로 세어 모자라면 '단체 추가' 줄로 합계를 비고 인원에 맞춘다
+    (사용자 지시 2026-11-03: 17실 30명 → +13). 가상 단체 3실 10명."""
+    monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
+    head = BREAKFAST[0]
+    rows = [head] + [[i, "가", "", "10명 조식 포함\n현장 결제", "가상협회(경기도)", f"030{i}", 1, 0] for i in (2, 3, 4)] \
+        + [[9, "나", "", "1인 조포", "주간 - 홍길동", "0501", 1, 0]]
+    res = cv.convert_file("breakfast", _xlsx(tmp_path / "bf.xlsx", rows), str(tmp_path / "out"), BDATE, cfg)
+    _, v = _values(res["output"])
+    body = [r for r in v[2:] if r[0] and r[0] != "합계" and not str(r[0]).startswith("조식")]
+    assert body[-1][0] == "단체" and body[-1][1] == "가상협회(경기도) 추가" and body[-1][2] == 7
+    assert [r[1] for r in body[:3]] == ["가상협회(경기도)"] * 3  # 지역 이름 '(경기도)'는 사람 이름으로 가리지 않음
+    assert body[3][1] == "홍0동" and sum(r[2] for r in body) == 11
+    assert not any(w.startswith("⚠") for w in res["warnings"])  # 추가 줄은 객실 인원 검사(4명 초과)에서 뺌
+    # 5번도 같은 단체 추가 인원을 합계에 넣는다
+    rv = [["Acct#", "객실#", "도착일자", "출발일자", "Adult", "Child", "투숙객명", "상태", "비고"]] + \
+         [["G1", f"040{i}", BDATE, "2026-10-23", 1, 0, "가상협회", "확정", "10명 조식 포함"] for i in (1, 2, 3)]
+    res = cv.breakfast_count(_xlsx(tmp_path / "ih.xlsx", INHOUSE), _xlsx(tmp_path / "rv.xlsx", rv),
+                             str(tmp_path / "out"), BDATE, cfg)
+    assert res["total"] == res["inhouse"] + res["arrivals"] + 7 and "단체 추가 인원 7명" in res["warnings"][0]

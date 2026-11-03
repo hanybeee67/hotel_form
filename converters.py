@@ -1143,7 +1143,7 @@ def _pax_sanity(records, conv, warnings):
     맨 위에 '확인 필요' 경고를 띄운다. 어떤 경로로 인원을 셌든 마지막에 한 번 더 검사한다."""
     cap = conv.get("max_pax_per_room", 4)
     big = [f"{r.get('room') or '미배정'}({r.get('pax')}명)" for r in records
-           if isinstance(r.get("pax"), (int, float)) and r["pax"] > cap]
+           if isinstance(r.get("pax"), (int, float)) and r["pax"] > cap and not r.get("_extra")]
     if big:
         warnings.insert(0, f"⚠ 확인 필요: 한 객실 인원이 {cap}명을 넘는 곳이 있습니다 — " + ", ".join(big)
                         + " (단체 전체 인원이 객실 인원으로 들어갔을 수 있습니다)")
@@ -1151,17 +1151,28 @@ def _pax_sanity(records, conv, warnings):
 
 
 def _check_group_totals(records, warnings):
-    """단체 비고의 전체 인원(N명)과 객실별로 센 인원 합을 비교해 작업 기록에 남긴다"""
+    """단체 비고의 전체 인원(N명)과 객실별로 센 인원 합을 비교해 작업 기록에 남긴다.
+    객실별로 센 합이 비고 인원보다 적으면(2026-11-03 실제: 17실에 '30명 조식 포함', 객실마다 1명으로 셈)
+    모자란 인원을 '단체 추가 인원' 한 줄로 돌려준다 → 명단 합계 = 비고 인원 (어느 방이 몇 명인지는 지어내지 않음)."""
     groups = {}
     for rec in records:
         m = re.search(r"단체 (\d+)명", rec.get("_why") or "")
         if m and rec.get("_bf", True):
-            g = groups.setdefault(int(m.group(1)), [0, 0])
+            g = groups.setdefault(int(m.group(1)), [0, 0, {}])
             g[0] += 1
             g[1] += rec.get("pax") or 0
-    for n, (rooms, pax) in groups.items():
+            name = (rec.get("guest") or "").strip()
+            g[2][name] = g[2].get(name, 0) + 1
+    extras = []
+    for n, (rooms, pax, names) in groups.items():
         same = "일치" if pax == n else f"다름 — 확인 필요"
+        name = max(names, key=names.get) if names else "단체"
+        if pax < n:
+            extras.append({"room": "단체", "guest": f"{name} 추가", "pax": n - pax,
+                           "_extra": True, "_bf": True, "_guess": False, "_why": f"단체 비고 {n}명 - 객실별 {pax}명"})
+            same = f"모자란 {n - pax}명은 '단체 추가 인원' 줄로 넣어 합계 {n}명"
         warnings.append(f"단체 비고 '조식 포함 ({n}명)': {rooms}객실을 투숙객명·성인 수로 세어 {pax}명 ({same})")
+    return extras
 
 
 _HANGUL_NAME = re.compile(r"[가-힣]{2,4}")
@@ -1195,7 +1206,8 @@ def korean_person_part(name):
     if len(parts) < 2:
         return None
     last = parts[-1]
-    if last in _LABEL_WORDS:
+    # 바로 앞 낱말이 근무조·직책 꼬리표일 때만 (단체명 뒤 '(경기도)' 같은 지역 이름은 이름이 아님, 2026-11-03)
+    if last in _LABEL_WORDS or parts[-2] not in _LABEL_WORDS:
         return None
     if is_korean_person_name(last) or _ERP_MASKED.fullmatch(last):
         return last
@@ -1833,7 +1845,6 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
                     if guess and "단체" not in why:
                         guessed.append(rec.get("room"))
             kept.append(rec)
-        _check_group_totals(kept, warnings)
         # 같은 객실이 여러 줄이면(동숙자 등) 한 번만 센다
         by_room, dup = {}, []
         for rec in kept:
@@ -1846,9 +1857,10 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
                 continue
             by_room[room] = rec
         records = list(by_room.values())
+        records += _check_group_totals(records, warnings)  # 단체 비고 인원보다 모자라면 '단체 추가 인원' 줄
         total = sum(r.get("pax") or 0 for r in records)
         excl = ", ".join(f"{k} {v}객실" for k, v in reasons.items())
-        warnings.append(f"조식 대상 {len(records)}객실 {total}명 (전체 {before}줄 중" + (f" 제외: {excl}" if excl else "") + ").")
+        warnings.append(f"조식 대상 {sum(1 for r in records if not r.get('_extra'))}객실 {total}명 (전체 {before}줄 중" + (f" 제외: {excl}" if excl else "") + ").")
         if dup:
             warnings.append(f"같은 객실이 여러 줄이라 한 번만 셌습니다: {', '.join(sorted(set(dup)))}")
         if guessed:
@@ -1869,7 +1881,7 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
     if cfg.get("mask_korean_names", True) and conv.get("mask_names"):  # 조식명단에만 (사용자 지시 2026-10-26)
         for rec in records:
             if rec.get("guest"):
-                rec["guest"] = mask_korean_name(rec["guest"])
+                rec["guest"] = rec["guest"] if rec.get("_extra") else mask_korean_name(rec["guest"])
 
     if conv.get("sort_by_room"):  # 단체 줄은 항상 맨 아래
         records.sort(key=lambda rec: (rec.get("_group", False), _room_key(rec)))
@@ -2014,7 +2026,7 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
         warnings.append("예약 리스트에 '예약상태' 열이 없어 취소·노쇼를 가려내지 못했고, 이미 체크인한 손님은 "
                         "예약번호·객실번호·이름으로만 가려냈습니다. 취소 건이 섞이지 않았는지 확인해 주세요.")
 
-    _check_group_totals(ih_all + arrivals, warnings)
+    extras = _check_group_totals(ih_all + arrivals, warnings)  # 단체 비고 인원보다 모자라면 '단체 추가 인원'
 
     # 3) 집계
     def summary(rows):
@@ -2024,11 +2036,13 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
 
     ih_bf, ih_rooms_n, ih_pax = summary(ih_all)
     ar_bf, ar_rooms_n, ar_pax = summary(arrivals)
+    extra_pax = sum(e["pax"] for e in extras)
     sanity_ok = _pax_sanity(ih_bf + ar_bf, bf_conv, warnings)
-    total = ih_pax + ar_pax
+    total = ih_pax + ar_pax + extra_pax
     excl = lambda rows: sum(1 for r in rows if not r["_bf"])
     warnings.insert(0, f"{bf_date:%m/%d} 아침 조식 {total}명 = 투숙 중 {ih_pax}명({ih_rooms_n}객실) "
-                       f"+ 오늘 도착 예정 {ar_pax}명({ar_rooms_n}객실)")
+                       f"+ 오늘 도착 예정 {ar_pax}명({ar_rooms_n}객실)"
+                       + (f" + 단체 추가 인원 {extra_pax}명" if extra_pax else ""))
     warnings.append(f"조식 아님(룸온리·표시 없음): 투숙 {excl(ih_all)}객실, 도착 예정 {excl(arrivals)}건")
     if skipped:
         warnings.append("예약 리스트에서 뺀 건: " + ", ".join(f"{k} {v}건" for k, v in skipped.items()))
@@ -2045,7 +2059,8 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
     # 4) 확인용 엑셀 (A4 세로 한 장 목록)
     mask = cfg.get("mask_korean_names", True)
     lines = [("투숙 중", r) for r in sorted(ih_bf, key=_room_key)] + \
-            [("도착 예정", r) for r in sorted(ar_bf, key=lambda r: (r.get("room") or "9999", r.get("guest") or ""))]
+            [("도착 예정", r) for r in sorted(ar_bf, key=lambda r: (r.get("room") or "9999", r.get("guest") or ""))] + \
+            [("단체 추가", e) for e in extras]
     wb = Workbook()
     ws = wb.active
     ws.title = bf_date.strftime("%m%d")
@@ -2056,6 +2071,8 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
     ws.row_dimensions[1].height = 40
     info = [("합계", total, f"{ih_rooms_n + ar_rooms_n}객실"), ("투숙 중 (체크인 완료)", ih_pax, f"{ih_rooms_n}객실"),
             ("오늘 도착 예정 (체크인 전)", ar_pax, f"{ar_rooms_n}객실")]
+    if extra_pax:
+        info.append(("단체 추가 인원 (비고 인원 - 객실별)", extra_pax, f"{len(extras)}단체"))
     for i, (k, v, n) in enumerate(info, 2):
         ws.merge_cells(start_row=i, start_column=1, end_row=i, end_column=2)
         ws.cell(i, 1, k).font = font(13, True)
@@ -2065,7 +2082,7 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
         for c in range(1, 6):
             ws.cell(i, c).alignment = _ONE_LINE
         ws.row_dimensions[i].height = 30
-    hrow = 6
+    hrow = 2 + len(info) + 1
     for c, h in enumerate(["구분", "객실", "고객명", "인원", "조식 근거"], 1):
         ws.cell(hrow, c, h).font = font(11, True)
         ws.cell(hrow, c).alignment = _CENTER
@@ -2073,7 +2090,7 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
     for kind, rec in lines:
         r += 1
         guest = rec.get("guest") or ""
-        vals = [kind, rec.get("room") or "미배정", mask_korean_name(guest) if mask else guest,
+        vals = [kind, rec.get("room") or "미배정", mask_korean_name(guest) if mask and not rec.get("_extra") else guest,
                 rec.get("pax"), rec.get("_why", "") + (" · 인원 확인" if rec["_guess"] or rec.get("pax") is None else "")]
         for c, v in enumerate(vals, 1):
             cell = ws.cell(r, c, v)
@@ -2083,7 +2100,7 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
         ws.row_dimensions[r].height = 22
     for col, w in zip("ABCDE", (16, 14, 30, 8, 24)):
         ws.column_dimensions[col].width = w
-    _draw_grid(ws, 1, 4, 1, 5)
+    _draw_grid(ws, 1, 1 + len(info), 1, 5)
     if r > hrow:
         _draw_grid(ws, hrow, r, 1, 5)
     else:
@@ -2111,6 +2128,7 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
                 guest = mask_korean_name(guest)
             recs.append({"room": r0.get("room") or "미배정", "guest": guest, "pax": r0.get("pax")})
         recs.sort(key=lambda r0: (not r0["room"].isdigit(), _room_key(r0)))
+        recs += [{"room": e["room"], "guest": e["guest"], "pax": e["pax"]} for e in extras]  # 맨 아래 (합계 바로 위)
         list_name = re.sub(r'[\\/:*?"<>|]', "-", conv.get("list_file_pattern", "조식명단(예약포함) {date}").format(
             date=bf_s, m=bf_date.month, d=bf_date.day))
         list_path = os.path.join(out_dir, f"{list_name}.xlsx")
@@ -2123,7 +2141,7 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
                                    drop_trailer=bf_conv.get("drop_trailer", ()),
                                    fit_pages=bf_conv.get("fit_pages", cfg.get("fit_pages")),
                                    fill_pages=bf_conv.get("fill_pages", False), width_px=bf_conv.get("width_px"))
-        warnings.append(f"호텔 양식 조식명단({len(recs)}객실 {total}명)도 만들었습니다: {os.path.basename(list_path)}"
+        warnings.append(f"호텔 양식 조식명단({len(recs) - len(extras)}객실 {total}명)도 만들었습니다: {os.path.basename(list_path)}"
                         + (" — 미배정 객실은 객실번호를 직접 적어 주세요" if any(r0['room'] == '미배정' for r0 in recs) else ""))
     return {"output": out_path, "list": list_path, "sanity_ok": sanity_ok,
             "count": ih_rooms_n + ar_rooms_n, "total": total, "inhouse": ih_pax,
