@@ -351,7 +351,7 @@ class PrintDialog(tk.Toplevel):
             messagebox.showwarning("마감서류 폴더", f"폴더를 열 수 없습니다.\n{self.folder}\n({e})", parent=self)
 
     def change_folder(self):
-        folder = filedialog.askdirectory(parent=self, title="인쇄할 마감서류가 있는 폴더를 고르세요 (예: 공유폴더의 마감서류)",
+        folder = filedialog.askdirectory(parent=self, title="인쇄할 마감서류가 있는 폴더를 고르세요 (예: 공유폴더의 마감파일)",
                                          initialdir=self.folder if os.path.isdir(self.folder) else None)
         if not folder:
             return

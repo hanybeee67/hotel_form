@@ -924,4 +924,4 @@ def test_print_plan_order(cfg, tmp_path):
         (short / name).write_bytes(b"x")
     assert [os.path.basename(p) for _, p in cv.print_plan(str(short), "2026-11-03", cfg)] == \
         ["대외 1103.xlsx", "카드1103.xlsx", "수입1103.xls", "일일1103.xlsx"]
-    assert cfg["print"]["folder"].endswith("마감서류")
+    assert cfg["print"]["folder"].endswith("마감파일")  # 사용자 확인 2026-11-03: 마감서류 = 공유폴더 마감파일
