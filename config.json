@@ -13,6 +13,12 @@
     "folder": "\\\\Desktop-d86h8fs\\공유폴더\\erp 원본",
     "names": {"income": "수입", "card": "카드", "credit": "대외", "inhouse": "인하", "rooms": "객실", "reserve": "예약", "prev_report": "일보"}
   },
+  "print": {
+    "_설명": "마감서류 인쇄 (사용자 요청 2026-11-03): 결과 폴더(공유폴더 마감파일)에서 영업일자 서류를 찾아 순서의 역순으로 인쇄 → 인쇄물을 쌓으면 순서대로. contains = 이름에 그 낱말과 날짜(MMDD·M월D일 등)가 들어 있는 파일",
+    "order": ["credit", "card", "income", {"label": "일일업무일지", "contains": "업무일지"}],
+    "reverse": true,
+    "delay_seconds": 12
+  },
   "breakfast_count": {
     "_설명": "조식 인원수(내일 아침): IN HOUSE LIST(이미 체크인) + 객실 예약 리스트(오늘 도착, 아직 체크인 전)를 합쳐 인원만 센다 (2026-10-27)",
     "title": "조식 인원수",

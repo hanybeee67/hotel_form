@@ -2353,6 +2353,55 @@ DAILY_SLOTS = [
 ]
 
 
+# ---------------------------------------------------------------- 마감서류 인쇄 (사용자 요청 2026-11-03)
+_DOC_EXT = (".xlsx", ".xls", ".xlsm", ".hwp", ".hwpx", ".cell", ".pdf", ".docx", ".doc")
+
+
+def _date_tokens(d):
+    """파일 이름에 들어갈 만한 날짜 표기들 (1103, 11월3일, 2026-11-03, 11.03 …)"""
+    return {d.strftime("%m%d"), f"{d.month}월{d.day}일", d.strftime("%Y-%m-%d"), d.strftime("%Y%m%d"),
+            d.strftime("%m.%d"), f"{d.month}.{d.day}", d.strftime("%m-%d"), f"{d.month}-{d.day}"}
+
+
+def print_plan(out_dir, business_date, cfg=None):
+    """인쇄할 마감서류 [(이름, 경로 또는 None)] — config print.order 순서 (대외 → 카드 → 수입 → 일일업무일지).
+    프로그램이 만든 서류는 file_pattern(영업일자) 그대로, 그 밖(일일업무일지)은 이름에 낱말 + 날짜가 들어간 파일.
+    같은 이름이 여러 개면(… (2).xlsx) 가장 최근에 저장한 파일."""
+    cfg = cfg or load_config()
+    d = _parse_date(business_date)
+    pcfg = cfg.get("print") or {}
+    try:
+        entries = [f for f in os.listdir(out_dir) if not f.startswith("~$") and f.lower().endswith(_DOC_EXT)]
+    except OSError:
+        entries = []
+    newest = lambda names: max((os.path.join(out_dir, f) for f in names), key=os.path.getmtime) if names else None
+    plan = []
+    for item in pcfg.get("order", ["credit", "card", "income"]):
+        if isinstance(item, str):
+            conv = cfg["converters"].get(item) or {}
+            stem = norm(re.sub(r'[\\/:*?"<>|]', "-", conv.get("file_pattern", "").format(
+                date=d.strftime("%Y-%m-%d"), m=d.month, d=d.day)))
+            hits = [f for f in entries if re.fullmatch(re.escape(stem) + r"\d{0,2}", norm(os.path.splitext(f)[0]))]
+            plan.append((conv.get("title", item), newest(hits)))
+        else:
+            word = norm(item.get("contains", ""))
+            toks = {norm(t) for t in _date_tokens(d)}
+            hits = [f for f in entries if word in norm(f) and any(t in norm(f) for t in toks)]
+            plan.append((item.get("label", item.get("contains", "")), newest(hits)))
+    return plan
+
+
+def print_file(path):
+    """Windows 기본 인쇄(파일을 연 프로그램이 그 파일의 인쇄 설정대로 기본 프린터로 인쇄)"""
+    if not sys.platform.startswith("win"):
+        raise ConversionError("인쇄는 Windows에서만 됩니다.")
+    try:
+        os.startfile(path, "print")  # noqa
+    except OSError as e:
+        raise ConversionError(f"인쇄하지 못했습니다: {os.path.basename(path)}\n({e})\n"
+                              "엑셀(또는 한셀)이 설치되어 있고 기본 프린터가 정해져 있는지 확인해 주세요.")
+
+
 def daily_named(stem, cfg=None):
     """'수입1102', '인하 1103'처럼 오늘 마감 이름 규칙(약칭 + MMDD)을 따른 파일 이름인가"""
     names = ((cfg or load_config()).get("daily") or {}).get("names", {})

@@ -296,6 +296,88 @@ class DailyDialog(tk.Toplevel):
         self.app.start_daily(self.folder, self.plan)
 
 
+class PrintDialog(tk.Toplevel):
+    """마감서류 인쇄 (사용자 요청 2026-11-03): 결과 폴더에서 그날 서류를 찾아 순서의 역순으로 인쇄 →
+    인쇄물을 쌓으면 대외 → 카드 → 수입 → 일일업무일지 순서가 된다."""
+
+    def __init__(self, app):
+        super().__init__(app, bg=C["bg"])
+        self.app = app
+        self.folder = cv.default_out_dir(None, app.cfg)
+        self.pcfg = app.cfg.get("print") or {}
+        self.title("마감서류 인쇄")
+        self.transient(app)
+        self.resizable(True, False)
+        head = tk.Frame(self, bg=C["head"], padx=18, pady=12)
+        head.pack(fill="x")
+        tk.Label(head, text=f"영업일자 {app.bdate:%Y-%m-%d} ({WEEKDAYS[app.bdate.weekday()]}) 마감서류 인쇄", bg=C["head"],
+                 fg="#FFFFFF", font=F(13, True)).pack(anchor="w")
+        tk.Label(head, text="노란 칸을 다 적고 저장한 뒤 인쇄하세요. 아래 순서의 거꾸로 인쇄해서, 다 나온 종이를 그대로 쌓으면 이 순서가 됩니다.",
+                 bg=C["head"], fg=C["head_sub"], font=F(9)).pack(anchor="w", pady=(2, 0))
+        tk.Label(self, text=f"폴더  {self.folder}", bg=C["bg"], fg=C["text"], font=F(9), anchor="w", padx=18).pack(
+            fill="x", pady=(10, 0))
+        self.body = tk.Frame(self, bg=C["card"], padx=16, pady=10, highlightthickness=1, highlightbackground=C["line"])
+        self.body.pack(fill="x", padx=14, pady=(6, 0))
+        self.info = tk.Label(self, text="", bg=C["bg"], fg=C["text"], font=F(9), anchor="w", justify="left", padx=18)
+        self.info.pack(fill="x", pady=(8, 0))
+        bar = tk.Frame(self, bg=C["bg"], padx=14, pady=12)
+        bar.pack(fill="x")
+        FlatButton(bar, "폴더 열기", self.open_folder, kind="soft", size=10, pady=8).pack(side="left")
+        FlatButton(bar, "다시 찾기", self.refresh, kind="soft", size=10, pady=8).pack(side="left", padx=(8, 0))
+        self.go = FlatButton(bar, "인쇄 시작  🖨", self.start, size=11, pady=8, padx=24)
+        self.go.pack(side="right")
+        FlatButton(bar, "닫기", self.destroy, kind="ghost", size=10, pady=8).pack(side="right", padx=(0, 8))
+        self.refresh()
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.grab_set()
+
+    def open_folder(self):
+        try:
+            open_path(self.folder)
+        except OSError as e:
+            messagebox.showwarning("마감서류 폴더", f"폴더를 열 수 없습니다.\n{self.folder}\n({e})", parent=self)
+
+    def refresh(self):
+        for w in self.body.winfo_children():
+            w.destroy()
+        self.plan = cv.print_plan(self.folder, f"{self.app.bdate:%Y-%m-%d}", self.app.cfg)
+        for i, (label, path) in enumerate(self.plan):
+            tk.Label(self.body, text="✔" if path else "✖", bg=C["card"], fg=C["ok"] if path else C["err"],
+                     font=F(13, True), width=2).grid(row=i, column=0, pady=4)
+            tk.Label(self.body, text=f"{i + 1}. {label}", bg=C["card"], fg=C["text"], font=F(11, True), anchor="w",
+                     width=14).grid(row=i, column=1, sticky="w")
+            tk.Label(self.body, text=os.path.basename(path) if path else "없음 — 이 서류는 빼고 인쇄", bg=C["card"],
+                     fg=C["ok"] if path else C["err"], font=F(9), anchor="w").grid(row=i, column=2, sticky="w", padx=(10, 0))
+        todo = [(l, p) for l, p in self.plan if p]
+        order = list(reversed(todo)) if self.pcfg.get("reverse", True) else todo
+        self.info.configure(text=("인쇄 순서: " + " → ".join(l for l, _ in order)) if order else
+                            "인쇄할 서류가 없습니다. 영업일자와 폴더를 확인해 주세요.")
+        self.go.set_enabled(bool(order))
+        self.order = order
+
+    def start(self):
+        if not self.go.enabled:
+            return
+        order, delay = self.order, int(float(self.pcfg.get("delay_seconds", 12)) * 1000)
+        self.destroy()
+        app = self.app
+        app._log(f"마감서류 인쇄 ({len(order)}개): " + " → ".join(l for l, _ in order), "bold")
+
+        def step(i):
+            if i >= len(order):
+                app._log("   인쇄 명령을 모두 보냈습니다. 프린터에서 다 나왔는지 확인해 주세요.", "ok")
+                return
+            label, path = order[i]
+            try:
+                cv.print_file(path)
+                app._log(f"   {i + 1}/{len(order)} {label}: {os.path.basename(path)}", "sub")
+            except cv.ConversionError as e:
+                app._log(f"   {label}: {e}", "err")
+            app.after(delay, lambda: step(i + 1))  # 앞 서류가 프린터로 넘어간 뒤 다음 서류 (순서가 뒤섞이지 않게)
+
+        step(0)
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -389,7 +471,7 @@ class App(tk.Tk):
         # 오늘 마감 한 번에: 바탕화면 ERP원본 폴더의 '수입1029'처럼 이름 붙인 파일을 찾아 모두 변환 (2026-10-29)
         self.daily_btn = FlatButton(act, "오늘 마감 한 번에  ▶", self.run_daily, size=11, pady=11)
         self.daily_btn.pack(side="left", fill="x", expand=True)
-        FlatButton(act, "ERP 파일 선택", self.run_daily, kind="soft", size=10, pady=11).pack(side="left", padx=(10, 0))
+        FlatButton(act, "마감서류 인쇄 🖨", self.run_print, kind="soft", size=10, pady=11).pack(side="left", padx=(10, 0))
         self.all_btn = FlatButton(act, "파일 골라서 변환", self.run_all, kind="soft", size=10, pady=11)
         self.all_btn.pack(side="left", padx=(10, 0))
         self.folder_btn = FlatButton(act, "결과 폴더 열기", self.open_folder, kind="soft", size=10, pady=11)
@@ -682,6 +764,10 @@ class App(tk.Tk):
             self._log("   " + n, "warn")
         if jobs:
             self._start(jobs, unique=False)
+
+    def run_print(self):
+        if not self.busy:
+            PrintDialog(self)
 
     def open_erp_folder(self):
         folder = cv.erp_folder(self.cfg)

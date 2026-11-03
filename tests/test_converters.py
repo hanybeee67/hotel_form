@@ -901,3 +901,19 @@ def test_daily_named_and_shared_folder_default(cfg):
     assert cfg["daily"]["folder"].lower().endswith("erp 원본") and cfg["daily"]["folder"].startswith("\\\\")
     assert cv.daily_named("수입1102", cfg) and cv.daily_named("인하 1103", cfg)
     assert not cv.daily_named("612_거래내역", cfg) and not cv.daily_named("객실조회", cfg)
+
+
+def test_print_plan_order(cfg, tmp_path):
+    """마감서류 인쇄 (사용자 요청 2026-11-03): 결과 폴더에서 영업일자 서류를 대외 → 카드 → 수입 → 일일업무일지 순으로 찾는다."""
+    import time as _t
+    for name in ["11월3일 대외후불리스트.xlsx", "카드 승인내역 2026-11-03.xlsx", "수입일보 2026-11-03.xlsx",
+                 "수입일보 2026-11-02.xlsx", "일일업무일지 1103.xlsx", "일일업무일지 1102.xlsx", "~$수입일보 2026-11-03.xlsx"]:
+        (tmp_path / name).write_bytes(b"x")
+    _t.sleep(0.01)
+    (tmp_path / "카드 승인내역 2026-11-03 (2).xlsx").write_bytes(b"x")  # 나중에 저장한 것
+    plan = cv.print_plan(str(tmp_path), "2026-11-03", cfg)
+    assert [l for l, _ in plan] == ["대외후불리스트", "카드승인내역", "수입일보", "일일업무일지"]
+    assert [os.path.basename(p) for _, p in plan] == ["11월3일 대외후불리스트.xlsx", "카드 승인내역 2026-11-03 (2).xlsx",
+                                                      "수입일보 2026-11-03.xlsx", "일일업무일지 1103.xlsx"]
+    assert cfg["print"]["reverse"] is True
+    assert [p for _, p in cv.print_plan(str(tmp_path), "2026-11-05", cfg)] == [None] * 4

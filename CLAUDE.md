@@ -286,6 +286,12 @@ tools/make_templates.py  호텔 실제 파일(.xls/.xlsx) → 빈 양식 생성 
   확인 창 맨 위에 폴더 경로 + **[전체 불러오기 (MMDD)]**(직접 고른 파일 지우고 폴더에서 그날 파일 모두 다시 찾기) + [폴더 바꾸기](settings `erp_folder`에 기억, config보다 우선).
   폴더를 열 수 없으면 빨간 안내(공유 PC 켜짐·네트워크 확인). 공유폴더엔 지난 파일이 쌓이므로 거래내역 자동 인식은 **최근 3일 안에 저장한 파일**만, 다른 날짜의 `약칭MMDD` 파일은 제외(`daily_named`, `daily.folio_days`)
 
+- ✅ **마감서류 인쇄 (사용자 요청 2026-11-03)** — 메인 화면 [마감서류 인쇄 🖨](같은 창을 열던 [ERP 파일 선택] 자리), app `PrintDialog`, converters `print_plan`·`print_file`:
+  결과 폴더(공유폴더 마감파일)에서 영업일자 서류를 **대외후불 → 카드 → 수입일보 → 일일업무일지** 순서로 찾고(config `print.order`, 프로그램 서류는 file_pattern,
+  일일업무일지는 이름에 `업무일지` + 날짜(1103·11월3일·2026-11-03 등)), **역순으로 인쇄**(`print.reverse`) → 나온 종이를 쌓으면 순서대로.
+  Windows 기본 인쇄(`os.startfile(path, "print")`, 그 파일의 인쇄 설정·기본 프린터), 순서가 섞이지 않게 서류 사이 `print.delay_seconds`(12초) 기다림.
+  같은 이름 사본(… (2))은 최근 파일. 없는 서류는 빼고 인쇄. ⚠ 호텔 PC(엑셀 호환 프로그램)에서 인쇄 명령이 되는지 실제 확인 필요
+
 ## 6-1. 배포 방법 (사용자 확인 2026-10-23)
 - 다운로드: Artifacts 링크가 사용자 화면에서 눌리지 않는 문제(2026-10-23) → 빌드마다 **Releases**(`build-<번호>` 태그, 최신으로 표시)에 `GeoseongClosingTool.zip`을 올림. 안내 주소: https://github.com/hanybeee67/hotel_form/releases/latest
 - 사용자는 GitHub Artifacts의 zip을 **카카오톡(나와의 채팅)** 으로 호텔 PC에 옮겨 실행. exe 단독 전송은 막힐 수 있어 **zip 그대로** 보내도록 안내(`docs/사용법.txt`)
