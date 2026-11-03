@@ -173,8 +173,18 @@ class DailyDialog(tk.Toplevel):
         head.pack(fill="x")
         tk.Label(head, text=f"영업일자 {app.bdate:%Y-%m-%d} ({WEEKDAYS[app.bdate.weekday()]}) 마감 파일", bg=C["head"],
                  fg="#FFFFFF", font=F(13, True)).pack(anchor="w")
-        tk.Label(head, text=f"ERP에서 엑셀전환한 파일을 바탕화면 ERP원본 폴더에 '이름{self.mmdd}'로 저장하면 자동으로 찾습니다. "
+        tk.Label(head, text=f"ERP에서 엑셀전환한 파일을 ERP 원본 폴더에 '이름{self.mmdd}'로 저장하면 [전체 불러오기]로 한 번에 찾습니다. "
                             "없거나 다른 파일이면 [선택]", bg=C["head"], fg=C["head_sub"], font=F(9)).pack(anchor="w", pady=(2, 0))
+        # ERP 원본 폴더 + [전체 불러오기] (사용자 요청 2026-11-03: 공유폴더에서 그날 파일을 한 번에 불러와 버튼 하나로)
+        fbar = tk.Frame(self, bg=C["card"], padx=16, pady=10, highlightthickness=1, highlightbackground=C["line"])
+        fbar.pack(fill="x", padx=14, pady=(12, 0))
+        tk.Label(fbar, text="ERP 원본 폴더", bg=C["card"], fg=C["text"], font=F(10, True)).pack(side="left")
+        self.folder_lbl = tk.Label(fbar, text="", bg=C["card"], font=F(9), anchor="w")
+        self.folder_lbl.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        FlatButton(fbar, "폴더 바꾸기", self.change_folder, kind="soft", size=9, padx=12, pady=4).pack(side="right")
+        FlatButton(fbar, f"전체 불러오기 ({self.mmdd})", self.load_all, size=10, padx=14, pady=5).pack(side="right", padx=(0, 8))
+        self.folder_warn = tk.Label(self, text="", bg=C["bg"], fg=C["err"], font=F(9, True), anchor="w", padx=18)
+        self.folder_warn.pack(fill="x")
         body = tk.Frame(self, bg=C["card"], padx=16, pady=10, highlightthickness=1, highlightbackground=C["line"])
         body.pack(fill="x", padx=14, pady=(12, 0))
         body.columnconfigure(2, weight=1)
@@ -209,13 +219,31 @@ class DailyDialog(tk.Toplevel):
         bar = tk.Frame(self, bg=C["bg"], padx=14, pady=12)
         bar.pack(fill="x")
         FlatButton(bar, "ERP원본 폴더 열기", app.open_erp_folder, kind="soft", size=10, pady=8).pack(side="left")
-        FlatButton(bar, "다시 찾기", self.refresh, kind="soft", size=10, pady=8).pack(side="left", padx=(8, 0))
         self.go = FlatButton(bar, "변환 시작  ▶", self.start, size=11, pady=8, padx=24)
         self.go.pack(side="right")
         FlatButton(bar, "닫기", self.destroy, kind="ghost", size=10, pady=8).pack(side="right", padx=(0, 8))
         self.refresh()
         self.bind("<Escape>", lambda e: self.destroy())
         self.grab_set()
+
+    def load_all(self):
+        """폴더에서 영업일자 파일을 전부 다시 불러온다 (직접 고른 파일은 지우고 폴더 것으로)"""
+        self.app.daily_overrides.clear()
+        self.refresh()
+        found = sum(1 for k, *_ in cv.DAILY_SLOTS if self.plan.get(k)) + len(self.plan["folios"])
+        self.app._log(f"전체 불러오기: {self.folder} 에서 {self.mmdd} 파일 {found}개", "ok" if found else "warn")
+
+    def change_folder(self):
+        folder = filedialog.askdirectory(parent=self, title="ERP 원본 파일이 있는 폴더를 고르세요 (예: 공유폴더의 erp 원본)",
+                                         initialdir=self.folder if os.path.isdir(self.folder) else None)
+        if not folder:
+            return
+        self.folder = os.path.normpath(folder)
+        try:
+            cv.save_user_setting("erp_folder", self.folder)
+        except cv.ConversionError as e:
+            messagebox.showerror("ERP 원본 폴더", str(e), parent=self)
+        self.load_all()
 
     def pick(self, key, label):
         path = filedialog.askopenfilename(parent=self, title=f"[{label}] 파일 선택", filetypes=FILETYPES)
@@ -232,6 +260,9 @@ class DailyDialog(tk.Toplevel):
     def refresh(self):
         plan = cv.daily_plan(self.folder, f"{self.app.bdate:%Y-%m-%d}", self.app.cfg, self.app.daily_overrides)
         self.plan = plan
+        ok = os.path.isdir(self.folder)
+        self.folder_lbl.configure(text=self.folder, fg=C["text"] if ok else C["err"])
+        self.folder_warn.configure(text="" if ok else "✖ 이 폴더를 열 수 없습니다 — 공유폴더 PC가 켜져 있는지·네트워크 연결을 확인하거나 [폴더 바꾸기]로 고르세요")
         for key, (icon, lbl, required) in self.rows.items():
             path = plan.get(key)
             if path:
@@ -262,7 +293,7 @@ class DailyDialog(tk.Toplevel):
         if not self.go.enabled:
             return
         self.destroy()
-        self.app.start_daily(self.folder)
+        self.app.start_daily(self.folder, self.plan)
 
 
 class App(tk.Tk):
@@ -641,7 +672,7 @@ class App(tk.Tk):
             self.daily_overrides, self._daily_date = {}, self.bdate  # 영업일자가 바뀌면 직접 고른 파일은 초기화
         DailyDialog(self, folder)
 
-    def start_daily(self, folder):
+    def start_daily(self, folder, plan=None):
         bdate = f"{self.bdate:%Y-%m-%d}"
         jobs, notes, found = cv.daily_jobs(folder, bdate, self.cfg, self.daily_overrides)
         self._log(f"오늘 마감 한 번에 (영업일자 {bdate})", "bold")

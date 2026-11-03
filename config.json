@@ -7,8 +7,9 @@
   "mask_korean_names": true,
   "mask_card_number": true,
   "daily": {
-    "_설명": "오늘 마감 한 번에: 바탕화면 ERP원본 폴더의 '약칭+MMDD' 파일을 찾아 모두 변환 (사용자 지시 2026-10-29). 예약은 없어도 됨(객실로 대신)",
-    "folder": "",
+    "_설명": "오늘 마감 한 번에: ERP 원본 폴더의 '약칭+MMDD' 파일을 찾아 모두 변환 (사용자 지시 2026-10-29). 예약은 없어도 됨(객실로 대신)",
+    "_folder": "프론트 공유폴더 (사용자 지시 2026-11-03). 빈칸이면 바탕화면\\ERP원본. 화면의 [폴더 바꾸기]로 고른 폴더가 우선",
+    "folder": "\\\\Desktop-d86h8fs\\공유폴더\\erp 원본",
     "names": {"income": "수입", "card": "카드", "credit": "대외", "inhouse": "인하", "rooms": "객실", "reserve": "예약", "prev_report": "일보"}
   },
   "breakfast_count": {

@@ -5,6 +5,7 @@ import datetime as dt
 import json
 import os
 import re
+import time
 import sys
 from copy import copy
 from html.parser import HTMLParser
@@ -2352,6 +2353,13 @@ DAILY_SLOTS = [
 ]
 
 
+def daily_named(stem, cfg=None):
+    """'수입1102', '인하 1103'처럼 오늘 마감 이름 규칙(약칭 + MMDD)을 따른 파일 이름인가"""
+    names = ((cfg or load_config()).get("daily") or {}).get("names", {})
+    t = norm(stem)
+    return any(re.match(rf"^{re.escape(norm(p))}\D*\d{{4}}(?!\d)", t) for p in names.values() if p)
+
+
 def daily_plan(folder, business_date, cfg=None, overrides=None):
     """오늘 마감 파일 계획: {키: 경로 또는 None} + 거래내역 목록. overrides = 화면에서 직접 고른 파일(폴더보다 우선)"""
     cfg = cfg or load_config()
@@ -2365,11 +2373,15 @@ def daily_plan(folder, business_date, cfg=None, overrides=None):
     named = {v for v in plan.values() if v}
     folios = list((overrides or {}).get("folios") or [])
     if not folios:  # 객실별 거래내역(정산한 객실만, 선택): 이름과 상관없이 내용으로 찾는다
+        # 공유폴더에는 지난 파일이 쌓이므로 최근 며칠 안에 저장한 파일만 열어 본다 (2026-11-03, 네트워크에서 느려지지 않게)
+        recent = time.time() - float((cfg.get("daily") or {}).get("folio_days", 3)) * 86400
         try:
             for name in sorted(os.listdir(folder)):
                 p = os.path.join(folder, name)
                 if p in named or name.startswith("~$") or not name.lower().endswith(_TABLE_EXT):
                     continue
+                if daily_named(os.path.splitext(name)[0], cfg) or os.path.getmtime(p) < recent:
+                    continue  # 다른 날짜의 수입·카드·인하… 파일이거나 오래된 파일
                 if read_folio(p):
                     folios.append(p)
         except OSError:

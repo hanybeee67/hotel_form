@@ -282,6 +282,10 @@ tools/make_templates.py  호텔 실제 파일(.xls/.xlsx) → 빈 양식 생성 
   (`_income_card_payments`, `_fill_card_rooms_by_payment`: 객실조회로 못 정한 건·퇴실 손님 건을 같은 금액 결제로 찾음, 같은 금액 건수가 같으면 차례로)
   실제 10/28: 카드 8건 모두 객실 채움(객실조회 5 + 결제 금액 3) / ④⑤ 조식 ← IN HOUSE + 객실조회
 
+- ✅ **공유폴더에서 전체 불러오기 (사용자 요청 2026-11-03)**: 기본 ERP 원본 폴더 = `\\Desktop-d86h8fs\공유폴더\erp 원본`(config `daily.folder`).
+  확인 창 맨 위에 폴더 경로 + **[전체 불러오기 (MMDD)]**(직접 고른 파일 지우고 폴더에서 그날 파일 모두 다시 찾기) + [폴더 바꾸기](settings `erp_folder`에 기억, config보다 우선).
+  폴더를 열 수 없으면 빨간 안내(공유 PC 켜짐·네트워크 확인). 공유폴더엔 지난 파일이 쌓이므로 거래내역 자동 인식은 **최근 3일 안에 저장한 파일**만, 다른 날짜의 `약칭MMDD` 파일은 제외(`daily_named`, `daily.folio_days`)
+
 ## 6-1. 배포 방법 (사용자 확인 2026-10-23)
 - 다운로드: Artifacts 링크가 사용자 화면에서 눌리지 않는 문제(2026-10-23) → 빌드마다 **Releases**(`build-<번호>` 태그, 최신으로 표시)에 `GeoseongClosingTool.zip`을 올림. 안내 주소: https://github.com/hanybeee67/hotel_form/releases/latest
 - 사용자는 GitHub Artifacts의 zip을 **카카오톡(나와의 채팅)** 으로 호텔 PC에 옮겨 실행. exe 단독 전송은 막힐 수 있어 **zip 그대로** 보내도록 안내(`docs/사용법.txt`)

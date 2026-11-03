@@ -891,3 +891,10 @@ def test_breakfast_group_note_rooms_people(cfg, tmp_path, monkeypatch):
     assert body[-1] == ("단체", "가상협회 추가", 4, None)[:len(body[-1])] or (body[-1][0], body[-1][2]) == ("단체", 4)
     assert sum(r[2] for r in body) == 7
     assert any("적힌 방 갯수 4실" in w for w in res["warnings"])  # 방 수가 다르면 확인 요청
+
+
+def test_daily_named_and_shared_folder_default(cfg):
+    """공유폴더(사용자 지시 2026-11-03): 기본 ERP 원본 폴더 = 프론트 공유폴더, 다른 날짜 마감 파일은 거래내역으로 열지 않음."""
+    assert cfg["daily"]["folder"].lower().endswith("erp 원본") and cfg["daily"]["folder"].startswith("\\\\")
+    assert cv.daily_named("수입1102", cfg) and cv.daily_named("인하 1103", cfg)
+    assert not cv.daily_named("612_거래내역", cfg) and not cv.daily_named("객실조회", cfg)
