@@ -303,7 +303,7 @@ class PrintDialog(tk.Toplevel):
     def __init__(self, app):
         super().__init__(app, bg=C["bg"])
         self.app = app
-        self.folder = cv.default_out_dir(None, app.cfg)
+        self.folder = cv.print_folder(app.cfg)
         self.pcfg = app.cfg.get("print") or {}
         self.title("마감서류 인쇄")
         self.transient(app)
@@ -312,10 +312,18 @@ class PrintDialog(tk.Toplevel):
         head.pack(fill="x")
         tk.Label(head, text=f"영업일자 {app.bdate:%Y-%m-%d} ({WEEKDAYS[app.bdate.weekday()]}) 마감서류 인쇄", bg=C["head"],
                  fg="#FFFFFF", font=F(13, True)).pack(anchor="w")
-        tk.Label(head, text="노란 칸을 다 적고 저장한 뒤 인쇄하세요. 아래 순서의 거꾸로 인쇄해서, 다 나온 종이를 그대로 쌓으면 이 순서가 됩니다.",
-                 bg=C["head"], fg=C["head_sub"], font=F(9)).pack(anchor="w", pady=(2, 0))
-        tk.Label(self, text=f"폴더  {self.folder}", bg=C["bg"], fg=C["text"], font=F(9), anchor="w", padx=18).pack(
-            fill="x", pady=(10, 0))
+        tk.Label(head, text="파일 이름은 제목 앞 두 글자 + 날짜 (대외1103·카드1103·수입1103·일일1103). "
+                            "아래 순서의 거꾸로 인쇄해서, 다 나온 종이를 그대로 쌓으면 이 순서가 됩니다.",
+                 bg=C["head"], fg=C["head_sub"], font=F(9), justify="left",
+                 wraplength=int(720 * UI_SCALE)).pack(anchor="w", pady=(2, 0))
+        fbar = tk.Frame(self, bg=C["bg"], padx=18)
+        fbar.pack(fill="x", pady=(10, 0))
+        tk.Label(fbar, text="마감서류 폴더", bg=C["bg"], fg=C["text"], font=F(10, True)).pack(side="left")
+        self.folder_lbl = tk.Label(fbar, text="", bg=C["bg"], font=F(9), anchor="w")
+        self.folder_lbl.pack(side="left", padx=(10, 0), fill="x", expand=True)
+        FlatButton(fbar, "폴더 바꾸기", self.change_folder, kind="soft", size=9, padx=12, pady=4).pack(side="right")
+        self.folder_warn = tk.Label(self, text="", bg=C["bg"], fg=C["err"], font=F(9, True), anchor="w", padx=18)
+        self.folder_warn.pack(fill="x")
         self.body = tk.Frame(self, bg=C["card"], padx=16, pady=10, highlightthickness=1, highlightbackground=C["line"])
         self.body.pack(fill="x", padx=14, pady=(6, 0))
         self.info = tk.Label(self, text="", bg=C["bg"], fg=C["text"], font=F(9), anchor="w", justify="left", padx=18)
@@ -331,13 +339,33 @@ class PrintDialog(tk.Toplevel):
         self.bind("<Escape>", lambda e: self.destroy())
         self.grab_set()
 
+    def _short(self, i):
+        order = self.pcfg.get("order") or []
+        item = order[i] if i < len(order) else {}
+        return item.get("prefix", "") if isinstance(item, dict) else ""
+
     def open_folder(self):
         try:
             open_path(self.folder)
         except OSError as e:
             messagebox.showwarning("마감서류 폴더", f"폴더를 열 수 없습니다.\n{self.folder}\n({e})", parent=self)
 
+    def change_folder(self):
+        folder = filedialog.askdirectory(parent=self, title="인쇄할 마감서류가 있는 폴더를 고르세요 (예: 공유폴더의 마감서류)",
+                                         initialdir=self.folder if os.path.isdir(self.folder) else None)
+        if not folder:
+            return
+        self.folder = os.path.normpath(folder)
+        try:
+            cv.save_user_setting("print_folder", self.folder)
+        except cv.ConversionError as e:
+            messagebox.showerror("마감서류 폴더", str(e), parent=self)
+        self.refresh()
+
     def refresh(self):
+        ok = os.path.isdir(self.folder)
+        self.folder_lbl.configure(text=self.folder, fg=C["text"] if ok else C["err"])
+        self.folder_warn.configure(text="" if ok else "✖ 이 폴더를 열 수 없습니다 — 공유폴더 PC·네트워크를 확인하거나 [폴더 바꾸기]로 고르세요")
         for w in self.body.winfo_children():
             w.destroy()
         self.plan = cv.print_plan(self.folder, f"{self.app.bdate:%Y-%m-%d}", self.app.cfg)
@@ -346,7 +374,8 @@ class PrintDialog(tk.Toplevel):
                      font=F(13, True), width=2).grid(row=i, column=0, pady=4)
             tk.Label(self.body, text=f"{i + 1}. {label}", bg=C["card"], fg=C["text"], font=F(11, True), anchor="w",
                      width=14).grid(row=i, column=1, sticky="w")
-            tk.Label(self.body, text=os.path.basename(path) if path else "없음 — 이 서류는 빼고 인쇄", bg=C["card"],
+            tk.Label(self.body, text=os.path.basename(path) if path else
+                     f"없음 — '{self._short(i)}{self.app.bdate:%m%d}' 파일이 없어 빼고 인쇄", bg=C["card"],
                      fg=C["ok"] if path else C["err"], font=F(9), anchor="w").grid(row=i, column=2, sticky="w", padx=(10, 0))
         todo = [(l, p) for l, p in self.plan if p]
         order = list(reversed(todo)) if self.pcfg.get("reverse", True) else todo

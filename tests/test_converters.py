@@ -917,3 +917,11 @@ def test_print_plan_order(cfg, tmp_path):
                                                       "수입일보 2026-11-03.xlsx", "일일업무일지 1103.xlsx"]
     assert cfg["print"]["reverse"] is True
     assert [p for _, p in cv.print_plan(str(tmp_path), "2026-11-05", cfg)] == [None] * 4
+    # 사용자 2026-11-03: 마감서류 폴더의 이름 = 제목 앞 두 글자 + 날짜 (대외1103, 카드1103, 수입1103, 일일1103)
+    short = tmp_path / "마감서류"
+    short.mkdir()
+    for name in ["일일1103.xlsx", "수입1103.xls", "카드1103.xlsx", "대외 1103.xlsx", "수입1102.xlsx", "카드11031.xlsx"]:
+        (short / name).write_bytes(b"x")
+    assert [os.path.basename(p) for _, p in cv.print_plan(str(short), "2026-11-03", cfg)] == \
+        ["대외 1103.xlsx", "카드1103.xlsx", "수입1103.xls", "일일1103.xlsx"]
+    assert cfg["print"]["folder"].endswith("마감서류")

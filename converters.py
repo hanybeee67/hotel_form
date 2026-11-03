@@ -2363,31 +2363,49 @@ def _date_tokens(d):
             d.strftime("%m.%d"), f"{d.month}.{d.day}", d.strftime("%m-%d"), f"{d.month}-{d.day}"}
 
 
-def print_plan(out_dir, business_date, cfg=None):
+def print_folder(cfg=None):
+    """마감서류 인쇄 폴더: 화면에서 고른 폴더 > config print.folder(공유폴더 마감서류) > 결과 폴더"""
+    chosen = (load_user_settings().get("print_folder") or "").strip()
+    if chosen:
+        return chosen
+    custom = (((cfg or {}).get("print") or {}).get("folder") or "").strip()
+    return custom or default_out_dir(None, cfg)
+
+
+def print_plan(folder, business_date, cfg=None):
     """인쇄할 마감서류 [(이름, 경로 또는 None)] — config print.order 순서 (대외 → 카드 → 수입 → 일일업무일지).
-    프로그램이 만든 서류는 file_pattern(영업일자) 그대로, 그 밖(일일업무일지)은 이름에 낱말 + 날짜가 들어간 파일.
-    같은 이름이 여러 개면(… (2).xlsx) 가장 최근에 저장한 파일."""
+    찾는 이름 (사용자 2026-11-03: 마감서류 이름은 늘 '제목 앞 두 글자 + 날짜'):
+      ① 앞 두 글자 + 날짜 — 대외1103, 카드 1103, 수입일보1103, 일일업무일지 11월3일
+      ② 프로그램이 만든 이름 — 수입일보 2026-11-03, 11월3일 대외후불리스트
+      ③ contains 낱말 + 날짜가 이름 어딘가에
+    같은 서류가 여러 개면 가장 최근에 저장한 파일."""
     cfg = cfg or load_config()
     d = _parse_date(business_date)
     pcfg = cfg.get("print") or {}
     try:
-        entries = [f for f in os.listdir(out_dir) if not f.startswith("~$") and f.lower().endswith(_DOC_EXT)]
+        entries = [f for f in os.listdir(folder) if not f.startswith("~$") and f.lower().endswith(_DOC_EXT)]
     except OSError:
         entries = []
-    newest = lambda names: max((os.path.join(out_dir, f) for f in names), key=os.path.getmtime) if names else None
+    toks = sorted({norm(t) for t in _date_tokens(d)}, key=len, reverse=True)
+    tok_re = "(?:" + "|".join(re.escape(t) for t in toks) + r")(?!\d)"
+    newest = lambda names: max((os.path.join(folder, f) for f in names), key=os.path.getmtime) if names else None
     plan = []
-    for item in pcfg.get("order", ["credit", "card", "income"]):
+    for item in pcfg.get("order", []):
         if isinstance(item, str):
-            conv = cfg["converters"].get(item) or {}
-            stem = norm(re.sub(r'[\\/:*?"<>|]', "-", conv.get("file_pattern", "").format(
+            item = {"conv": item}
+        conv = cfg["converters"].get(item.get("conv") or "") or {}
+        pats = []
+        if item.get("prefix"):
+            pats.append(re.compile("^" + re.escape(norm(item["prefix"])) + r"\D*" + tok_re))
+        if conv.get("file_pattern"):
+            stem = norm(re.sub(r'[\\/:*?"<>|]', "-", conv["file_pattern"].format(
                 date=d.strftime("%Y-%m-%d"), m=d.month, d=d.day)))
-            hits = [f for f in entries if re.fullmatch(re.escape(stem) + r"\d{0,2}", norm(os.path.splitext(f)[0]))]
-            plan.append((conv.get("title", item), newest(hits)))
-        else:
-            word = norm(item.get("contains", ""))
-            toks = {norm(t) for t in _date_tokens(d)}
-            hits = [f for f in entries if word in norm(f) and any(t in norm(f) for t in toks)]
-            plan.append((item.get("label", item.get("contains", "")), newest(hits)))
+            pats.append(re.compile("^" + re.escape(stem) + r"\d{0,2}$"))
+        if item.get("contains"):
+            pats.append(re.compile(re.escape(norm(item["contains"])) + ".*" + tok_re + "|" + tok_re + ".*"
+                                   + re.escape(norm(item["contains"]))))
+        hits = [f for f in entries if any(p.search(norm(os.path.splitext(f)[0])) for p in pats)]
+        plan.append((item.get("label") or conv.get("title") or item.get("prefix", ""), newest(hits)))
     return plan
 
 
