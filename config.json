@@ -57,6 +57,8 @@
       "signature": ["sales_kind"],
       "sheet_title": "수 입 일 보 ({md})",
       "file_pattern": "수입일보 {date}",
+      "_input_fill": "노란 칸 없이, 컬러 인쇄 (사용자 지시 2026-11-03: 지출 위 회색 줄이 종이에도 회색으로 나오게)",
+      "input_fill": false,
       "template": "templates/수입일보.xlsx",
       "font": {"name": "굴림", "orientation": "landscape", "title": 26, "title_bold": true, "header": 18, "header_bold": true, "body": 18, "body_bold": true,
                "title_height": 50.1, "header_height": 33.95, "row_height": 33.95, "header_fill": null, "sum_fill": null},

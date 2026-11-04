@@ -93,13 +93,14 @@ def test_income(cfg, tmp_path):
     assert v[2][7] == 88000  # 매출 = 부가세 포함 금액 (NET 아님)
     assert v[2][8] == "=H3*G3"  # 누계 = 매출 × 숙박수 (호텔 실제 일보, 자기 자신을 가리키면 순환 참조)
     assert v[5][6] == "계" and v[5][7] == "=SUM(H3:H5)" and v[5][8] == "=SUM(I3:I5)"
-    assert ws["F3"].fill.fgColor.rgb.endswith("FFF2B3")  # 선/후 노란 칸
+    # 사용자 지시 2026-11-03: 수입일보는 노란 칸 없음 + 컬러 인쇄 (지출 위 회색 줄이 종이에도 나오게)
+    assert ws["F3"].fill.fill_type in (None, "none") and not ws.page_setup.blackAndWhite
     dvs = {str(dv.sqref): dv for dv in ws.data_validations.dataValidation}
     assert dvs["F3:F5"].formula1 == '"카.선,현.선,후,온라인결제"'  # 선/후는 목록에서 고르는 노란 칸 (직접 써도 됨)
     assert not dvs["F3:F5"].showErrorMessage
     assert [v[2][6], v[3][6]] == [1, 1]  # 숙박수 = 출발일 - 도착일 (자동)
     assert not ws["G3"].fill.fgColor.rgb.endswith("FFF2B3")
-    assert ws.page_setup.blackAndWhite  # 노란 칸은 인쇄되지 않게
+    assert not ws.page_setup.blackAndWhite  # 수입일보는 컬러 인쇄 (2026-11-03, 회색 줄이 종이에 나오게)
     assert ws["B3"].font.name == "굴림" and ws["B3"].font.sz == 18 and ws["A1"].font.sz == 26  # 11/01 표준
     assert os.path.basename(res["output"]) == "수입일보 2026-10-22.xlsx"
     # 수입일보는 매출이 잡힌 줄은 객실 범위 밖(1030 외부 조식 등)도 모두 집계 (2026-10-28)
@@ -115,7 +116,7 @@ def test_income(cfg, tmp_path):
     # 노란 입력 칸도 다른 칸과 같은 가는 선 (2026-11-02: 인쇄 시 노란 칸 테두리만 진하게 나와 제거)
     assert ws["F3"].border.right.style == "thin" and ws["G3"].border.left.style == "thin"
     assert ws["F3"].border.left.style == "thin" and ws["E3"].border.right.style == "thin"
-    assert ws["F3"].fill.fgColor.rgb == "FFFFF2B3"
+    assert ws["F3"].fill.fill_type in (None, "none")
     ps = ws.page_setup
     assert int(ps.paperSize) == 9 and ps.orientation == "landscape" and ps.fitToWidth == 1 and ps.fitToHeight == 0  # A4 너비 1장, 줄 높이는 11/01 표준 그대로(장 수 제한 없음)
     assert ws.print_options.horizontalCentered and ws.print_title_rows == "$1:$2"
@@ -796,7 +797,7 @@ def test_income_prepost_prefill(cfg, tmp_path):
     res = cv.convert_file("income", _xlsx(tmp_path / "수입.xlsx", rows), str(tmp_path / "out"), BDATE, cfg)
     ws, v = _values(res["output"])
     assert [r[5] for r in v[2:6]] == ["카.선", "온라인결제", None, None]
-    assert ws["F5"].fill.fgColor.rgb.endswith("FFF2B3") and not ws["F3"].fill.fgColor.rgb.endswith("FFF2B3")
+    assert ws["F5"].value is None and ws["F5"].fill.fill_type in (None, "none")  # 수입일보는 노란 칸 없음 (2026-11-03)
 
 
 def test_card_room_from_income_payment(cfg, tmp_path):

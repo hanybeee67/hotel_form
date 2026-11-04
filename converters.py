@@ -791,7 +791,8 @@ def _add_card_lookup_sheet(wb, look):
 def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                    number_format="0", notes=None, cash=None, row_height=None,
                    template=None, font_cfg=None, sum_label="계", sum_label_field=None, drop_trailer=(),
-                   fit_pages=None, fill_pages=False, width_px=None, card_lookup=None, expenses=None):
+                   fit_pages=None, fill_pages=False, width_px=None, card_lookup=None, expenses=None,
+                   input_fill=True):
     """template(호텔 양식 경로)가 있으면 양식을 열어 값만 채우고, 없으면 font_cfg로 새로 만든다.
     expenses(수입일보): 그날 지출 [{item, vendor, amount}] — 있으면 마지막 계 아래에 회색 빈 줄 + '지출' 줄 (없으면 아무것도 안 붙임)
     반환: 경고 목록"""
@@ -1027,7 +1028,13 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                    min_ratio=fill_pages if isinstance(fill_pages, float) else 0.75, width_px=width_px)
     if ws.auto_filter.ref and records:
         ws.auto_filter.ref = f"A{hrow}:{get_column_letter(right)}{last}"
-    if manual or (cash is not None and cash.get("amount") is None):
+    if not input_fill:
+        # 수입일보 (사용자 지시 2026-11-03): 노란 칸 없음 + 컬러 인쇄 → 지출 위 회색 줄이 종이에도 회색으로
+        for row in ws.iter_rows(min_row=1, max_row=table_end):
+            for cell in row:
+                if _is_blank_fill(cell):
+                    cell.fill = copy(_NO_FILL)
+    elif manual or (cash is not None and cash.get("amount") is None):
         # 노란 칸은 화면에서만 보이는 안내 → 인쇄는 흑백으로 해서 호텔 양식처럼 나오게
         ws.page_setup.blackAndWhite = True
 
@@ -2001,7 +2008,7 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
                                drop_trailer=conv.get("drop_trailer", ()),
                                fit_pages=conv.get("fit_pages", cfg.get("fit_pages")),
                                fill_pages=conv.get("fill_pages", False), width_px=conv.get("width_px"),
-                               card_lookup=card_lookup,
+                               card_lookup=card_lookup, input_fill=conv.get("input_fill", True),
                                expenses=[{**e, "date": e.get("date") or bdate.strftime("%Y-%m-%d")} for e in expenses]
                                if kind == "income" and expenses else None)
     if kind == "income" and expenses:
