@@ -341,6 +341,7 @@ _THIN = Side(style="thin", color="000000")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _BLANK_FILL = PatternFill("solid", fgColor="FFFFF2B3")  # 근무자가 직접 확인/입력할 칸
 _NO_FILL = PatternFill(fill_type=None)
+_EXPENSE_GAP = "FF969696"  # 지출 줄 위 회색 빈 줄 (10/29 수작업 일보의 회색)
 _CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 _ONE_LINE = Alignment(horizontal="center", vertical="center", shrink_to_fit=True)  # 호텔 양식처럼 한 줄 (넘치면 글자 축소)
 _DEFAULT_FONT = {"name": "굴림", "title": 20, "header": 9, "body": 9}
@@ -790,8 +791,9 @@ def _add_card_lookup_sheet(wb, look):
 def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                    number_format="0", notes=None, cash=None, row_height=None,
                    template=None, font_cfg=None, sum_label="계", sum_label_field=None, drop_trailer=(),
-                   fit_pages=None, fill_pages=False, width_px=None, card_lookup=None):
+                   fit_pages=None, fill_pages=False, width_px=None, card_lookup=None, expenses=None):
     """template(호텔 양식 경로)가 있으면 양식을 열어 값만 채우고, 없으면 font_cfg로 새로 만든다.
+    expenses(수입일보): 그날 지출 [{item, vendor, amount}] — 있으면 마지막 계 아래에 회색 빈 줄 + '지출' 줄 (없으면 아무것도 안 붙임)
     반환: 경고 목록"""
     if template:
         s = _template_sheet(template, sheet_name, title_text, out_cols)
@@ -964,6 +966,37 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
         for c0, c1, extra in merges:
             ws.merge_cells(start_row=r, start_column=c0, end_row=r + extra, end_column=c1)
 
+    # 지출 (사용자 지시 2026-11-03, 10/29 수작업 일보 모양): 지출이 있는 날만 마지막 계 아래에 회색 빈 줄 한 칸 + 지출 줄
+    #   지출 | 품목 | 거래처 | 날짜 | … | 금액(매출 칸). 계에는 더하지 않음. 지출이 없으면 아무 표시도 안 함
+    expense_rows = []
+    if expenses:
+        r += 1
+        if s.data_height:
+            ws.row_dimensions[r].height = s.data_height
+        for c in printable + s.extra_cols:
+            cell = ws.cell(r, c)
+            _apply(cell, s.data_st[c])
+            cell.value = None
+            cell.fill = PatternFill("solid", fgColor=_EXPENSE_GAP, bgColor=_EXPENSE_GAP)
+        gap_row = r
+        put = lambda row, field, v: ws.cell(row, colmap[idx[field]]).__setattr__("value", v) if field in idx else None
+        for e in expenses:
+            r += 1
+            if s.data_height:
+                ws.row_dimensions[r].height = s.data_height
+            for c in printable + s.extra_cols:
+                _apply(ws.cell(r, c), s.data_st[c])
+                ws.cell(r, c).fill = copy(_NO_FILL)
+                ws.cell(r, c).value = None
+            put(r, "room", "지출")
+            put(r, "guest", e.get("item") or None)
+            put(r, "company", e.get("vendor") or None)
+            put(r, "arrival", e.get("date") or None)
+            put(r, "sales", e.get("amount"))
+            if "sales" in idx:
+                ws.cell(r, colmap[idx["sales"]]).number_format = number_format
+            expense_rows.append(r)
+
     table_end = r  # 여기까지가 표(제목~합계·안내 행). 아래 메모는 표 밖
 
     if notes:
@@ -974,6 +1007,19 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
 
     right = max(printable[-1], s.frame_last)
     _draw_grid(ws, 1, table_end, 1, right)
+    if expenses:  # 회색 줄은 둘레 선을 그대로, 다시 회색으로 (_draw_grid가 흰 채우기를 지우므로)
+        for c in printable + s.extra_cols:
+            ws.cell(gap_row, c).fill = PatternFill("solid", fgColor=_EXPENSE_GAP, bgColor=_EXPENSE_GAP)
+    # 수입일보: 계 줄 아래는 굵은 선으로 구분 (사용자 지시 2026-11-03, 11/02 일보처럼)
+    thick = Side(style="medium", color=_LINE)
+    for _a, _b, fr in sections:
+        for c in range(1, right + 1):
+            cell = ws.cell(fr, c)
+            b = cell.border
+            cell.border = Border(left=b.left, right=b.right, top=b.top, bottom=thick)
+            if fr + 1 <= table_end:
+                nb = ws.cell(fr + 1, c).border
+                ws.cell(fr + 1, c).border = Border(left=nb.left, right=nb.right, top=thick, bottom=nb.bottom)
     ws.print_area = f"A1:{get_column_letter(right)}{r}"
     _fit_a4(ws, hrow, keep_margins=bool(template) and not fill_pages)
     if fit_pages:
@@ -1060,6 +1106,8 @@ def _clean_copy(ws):
                                     shrink_to_fit=bool(a.shrink_to_fit))
             if _is_blank_fill(c):
                 d.fill = PatternFill("solid", fgColor="FFFFF2B3", bgColor="FFFFF2B3")
+            elif c.fill is not None and c.fill.fill_type == "solid" and str(c.fill.fgColor.rgb).upper() == _EXPENSE_GAP:
+                d.fill = PatternFill("solid", fgColor=_EXPENSE_GAP, bgColor=_EXPENSE_GAP)  # 지출 위 회색 줄
             d.number_format = c.number_format or "General"
     for key, dim in ws.column_dimensions.items():
         if dim.width:
@@ -1775,7 +1823,7 @@ def _fill_card_rooms_by_payment(records, payments, warnings):
 
 
 def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False, room_source=None, folios=None,
-                 prev_report=None, income_source=None):
+                 prev_report=None, income_source=None, expenses=None):
     """kind: income | card | credit | breakfast.
     반환: {'output': 경로, 'count': 건수, 'warnings': [...], 'title': 이름}"""
     cfg = cfg or load_config()
@@ -1953,7 +2001,12 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
                                drop_trailer=conv.get("drop_trailer", ()),
                                fit_pages=conv.get("fit_pages", cfg.get("fit_pages")),
                                fill_pages=conv.get("fill_pages", False), width_px=conv.get("width_px"),
-                               card_lookup=card_lookup)
+                               card_lookup=card_lookup,
+                               expenses=[{**e, "date": e.get("date") or bdate.strftime("%Y-%m-%d")} for e in expenses]
+                               if kind == "income" and expenses else None)
+    if kind == "income" and expenses:
+        warnings.append(f"지출 {len(expenses)}건을 마지막 계 아래(회색 줄 다음)에 넣었습니다: "
+                        + ", ".join(f"{e.get('item') or '?'} {e.get('amount') or 0:,.0f}원" for e in expenses))
     return {"output": out_path, "count": len(records), "warnings": warnings, "title": conv["title"]}
 
 
@@ -2436,7 +2489,7 @@ def daily_plan(folder, business_date, cfg=None, overrides=None):
     if f.get("reserve") and not plan.get("rooms"):
         plan["rooms"] = f["reserve"]
     plan["prev_report"] = find_prev_report(default_out_dir(None, cfg), bdate - dt.timedelta(days=1), cfg)
-    plan.update({k: v for k, v in (overrides or {}).items() if v and k != "folios"})
+    plan.update({k: v for k, v in (overrides or {}).items() if v and k not in ("folios", "expenses")})
     named = {v for v in plan.values() if v}
     folios = list((overrides or {}).get("folios") or [])
     if not folios:  # 객실별 거래내역(정산한 객실만, 선택): 이름과 상관없이 내용으로 찾는다
@@ -2467,7 +2520,8 @@ def daily_jobs(folder, business_date, cfg=None, overrides=None):
     names = (cfg.get("daily") or {}).get("names", {})
     jobs, notes = [], []
     if plan["income"]:
-        jobs.append(("income", plan["income"], {"folios": plan["folios"] or None, "prev_report": plan["prev_report"]}))
+        jobs.append(("income", plan["income"], {"folios": plan["folios"] or None, "prev_report": plan["prev_report"],
+                                                "expenses": (overrides or {}).get("expenses") or None}))
         if plan["folios"]:
             notes.append(f"객실별 거래내역 {len(plan['folios'])}개로 정산한 객실의 누계를 계산합니다: "
                          + ", ".join(os.path.basename(p) for p in plan["folios"]))

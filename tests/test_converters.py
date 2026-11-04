@@ -925,3 +925,22 @@ def test_print_plan_order(cfg, tmp_path):
     assert [os.path.basename(p) for _, p in cv.print_plan(str(short), "2026-11-03", cfg)] == \
         ["대외 1103.xlsx", "카드1103.xlsx", "수입1103.xls", "일일1103.xlsx"]
     assert cfg["print"]["folder"].endswith("마감파일")  # 사용자 확인 2026-11-03: 마감서류 = 공유폴더 마감파일
+
+
+def test_income_expenses_and_thick_total_lines(cfg, tmp_path, monkeypatch):
+    """수입일보 (사용자 지시 2026-11-03): 계 줄 아래 굵은 선, 지출이 있는 날만 마지막 계 아래에 회색 빈 줄 + 지출 줄 (가상 지출)."""
+    monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
+    src = _xlsx(tmp_path / "수입.xlsx", INCOME)
+    plain = load_workbook(cv.convert_file("income", src, str(tmp_path / "o1"), BDATE, cfg)["output"]).active
+    assert not any(str(plain.cell(r, 1).value) == "지출" for r in range(1, plain.max_row + 1))  # 지출 없는 날 = 표시 없음
+    totals = [r for r in range(1, plain.max_row + 1) if plain.cell(r, 7).value == "계"]
+    assert totals and all(plain.cell(r, 2).border.bottom.style == "medium" for r in totals)
+    res = cv.convert_file("income", src, str(tmp_path / "o2"), BDATE, cfg,
+                          expenses=[{"item": "건전지 외", "vendor": "가상마트", "amount": 35000}])
+    ws = load_workbook(res["output"]).active
+    last_total = max(r for r in range(1, ws.max_row + 1) if ws.cell(r, 7).value == "계")
+    gap, row = last_total + 1, last_total + 2
+    assert ws.cell(gap, 1).value is None and ws.cell(gap, 3).fill.fgColor.rgb == "FF969696"
+    assert [ws.cell(row, c).value for c in (1, 2, 3, 4, 8)] == ["지출", "건전지 외", "가상마트", BDATE, 35000]
+    assert ws.cell(row, 8).number_format == "#,##0" and ws.cell(row, 9).value is None
+    assert "SUM" in str(ws.cell(last_total, 8).value)  # 계에는 지출을 더하지 않음

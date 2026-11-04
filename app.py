@@ -213,6 +213,18 @@ class DailyDialog(tk.Toplevel):
                  bg=C["card"], fg=C["hint"], font=F(8), anchor="w").grid(row=i * 2 + 1, column=1, columnspan=2, sticky="w")
         FlatButton(body, "선택", self.pick_folios, kind="soft", size=9, padx=12, pady=4).grid(
             row=i * 2, column=3, rowspan=2, padx=(10, 0), pady=(6, 0))
+        # 지출 (사용자 지시 2026-11-03): 있는 날만 적으면 수입일보 마지막 계 아래에 회색 줄 + 지출 줄
+        i += 1
+        self.exp_icon = tk.Label(body, text="", bg=C["card"], font=F(13, True), width=2)
+        self.exp_icon.grid(row=i * 2, column=0, rowspan=2, sticky="n", pady=(6, 0))
+        tk.Label(body, text="지출 (있을 때만)", bg=C["card"], fg=C["text"], font=F(10, True)).grid(
+            row=i * 2, column=1, sticky="w", pady=(6, 0))
+        self.exp_lbl = tk.Label(body, text="", bg=C["card"], font=F(9), anchor="w")
+        self.exp_lbl.grid(row=i * 2, column=2, sticky="w", padx=(10, 0), pady=(6, 0))
+        tk.Label(body, text="오늘 지출한 품목·거래처·금액 → ① 수입일보 맨 아래 (회색 줄 다음, 계에는 안 더함)",
+                 bg=C["card"], fg=C["hint"], font=F(8), anchor="w").grid(row=i * 2 + 1, column=1, columnspan=2, sticky="w")
+        FlatButton(body, "입력", self.edit_expenses, kind="soft", size=9, padx=12, pady=4).grid(
+            row=i * 2, column=3, rowspan=2, padx=(10, 0), pady=(6, 0))
         self.out_lbl = tk.Label(self, text="", bg=C["bg"], fg=C["text"], font=F(9), justify="left", anchor="w", padx=18,
                                 wraplength=int(760 * UI_SCALE))
         self.out_lbl.pack(fill="x", pady=(10, 0))
@@ -228,7 +240,10 @@ class DailyDialog(tk.Toplevel):
 
     def load_all(self):
         """폴더에서 영업일자 파일을 전부 다시 불러온다 (직접 고른 파일은 지우고 폴더 것으로)"""
+        keep = self.app.daily_overrides.get("expenses")  # 직접 적은 지출은 그대로 둔다
         self.app.daily_overrides.clear()
+        if keep:
+            self.app.daily_overrides["expenses"] = keep
         self.refresh()
         found = sum(1 for k, *_ in cv.DAILY_SLOTS if self.plan.get(k)) + len(self.plan["folios"])
         self.app._log(f"전체 불러오기: {self.folder} 에서 {self.mmdd} 파일 {found}개", "ok" if found else "warn")
@@ -250,6 +265,13 @@ class DailyDialog(tk.Toplevel):
         if path:
             self.app.daily_overrides[key] = path
             self.refresh()
+
+    def edit_expenses(self):
+        ExpenseDialog(self, self.app.daily_overrides.get("expenses") or [], self._set_expenses)
+
+    def _set_expenses(self, rows):
+        self.app.daily_overrides["expenses"] = rows
+        self.refresh()
 
     def pick_folios(self):
         paths = filedialog.askopenfilenames(parent=self, title="객실별 거래내역 (Ctrl+클릭으로 여러 개)", filetypes=FILETYPES)
@@ -273,6 +295,10 @@ class DailyDialog(tk.Toplevel):
                 icon.configure(text="✖" if required else "–", fg=C["err"] if required else C["sub"])
                 lbl.configure(text="없음" + (" — 폴더에 저장하거나 [선택]" if required else " (없어도 됨)"),
                               fg=C["err"] if required else C["sub"])
+        ex = self.app.daily_overrides.get("expenses") or []
+        self.exp_icon.configure(text="✔" if ex else "–", fg=C["ok"] if ex else C["sub"])
+        self.exp_lbl.configure(text=(f"{len(ex)}건 · {sum(e.get('amount') or 0 for e in ex):,.0f}원" if ex else "없음 (지출 없는 날은 그대로)"),
+                               fg=C["ok"] if ex else C["sub"])
         n = len(plan["folios"])
         self.folio_icon.configure(text="✔" if n else "–", fg=C["ok"] if n else C["sub"])
         self.folio_lbl.configure(text=f"{n}개" if n else "없음 (없어도 됨)", fg=C["ok"] if n else C["sub"])
@@ -294,6 +320,63 @@ class DailyDialog(tk.Toplevel):
             return
         self.destroy()
         self.app.start_daily(self.folder, self.plan)
+
+
+class ExpenseDialog(tk.Toplevel):
+    """그날 지출 입력 (최대 6줄): 품목 · 거래처 · 금액. 빈 줄은 무시"""
+
+    def __init__(self, parent, rows, on_save):
+        super().__init__(parent, bg=C["bg"], padx=16, pady=14)
+        self.on_save = on_save
+        self.title("오늘 지출 입력")
+        self.transient(parent)
+        self.resizable(False, False)
+        tk.Label(self, text="지출이 있는 날만 적으세요. 수입일보 맨 아래에 '지출' 줄로 들어갑니다 (계에는 더하지 않음).",
+                 bg=C["bg"], fg=C["text"], font=F(9), wraplength=int(520 * UI_SCALE), justify="left").grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        for c, h in enumerate(["품목", "거래처", "금액(원)"]):
+            tk.Label(self, text=h, bg=C["bg"], fg=C["text"], font=F(9, True)).grid(row=1, column=c, sticky="w")
+        self.entries = []
+        for i in range(6):
+            row = rows[i] if i < len(rows) else {}
+            es = []
+            for c, (key, w) in enumerate((("item", 18), ("vendor", 16), ("amount", 10))):
+                e = tk.Entry(self, width=w, font=F(10))
+                v = row.get(key)
+                if v not in (None, ""):
+                    e.insert(0, f"{v:,.0f}" if key == "amount" else str(v))
+                e.grid(row=i + 2, column=c, padx=(0, 6), pady=2, sticky="we")
+                es.append(e)
+            self.entries.append(es)
+        self.msg = tk.Label(self, text="", bg=C["bg"], fg=C["err"], font=F(9))
+        self.msg.grid(row=9, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        bar = tk.Frame(self, bg=C["bg"])
+        bar.grid(row=10, column=0, columnspan=3, sticky="e", pady=(8, 0))
+        FlatButton(bar, "모두 지우기", self.clear, kind="ghost", size=9, pady=6).pack(side="left", padx=(0, 8))
+        FlatButton(bar, "저장", self.save, size=10, pady=6, padx=20).pack(side="left")
+        self.entries[0][0].focus_set()
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.grab_set()
+
+    def clear(self):
+        for es in self.entries:
+            for e in es:
+                e.delete(0, "end")
+
+    def save(self):
+        rows = []
+        for n, (item, vendor, amount) in enumerate(self.entries, 1):
+            it, ve, am = item.get().strip(), vendor.get().strip(), amount.get().strip().replace(",", "").replace("원", "")
+            if not (it or ve or am):
+                continue
+            try:
+                val = float(am) if am else None
+            except ValueError:
+                self.msg.configure(text=f"{n}번째 줄 금액을 숫자로 적어 주세요 (예: 35000)")
+                return
+            rows.append({"item": it, "vendor": ve, "amount": int(val) if val is not None and val.is_integer() else val})
+        self.on_save(rows)
+        self.destroy()
 
 
 class PrintDialog(tk.Toplevel):
