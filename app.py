@@ -199,8 +199,15 @@ class DailyDialog(tk.Toplevel):
             file_lbl.grid(row=i * 2, column=2, sticky="w", padx=(10, 0), pady=(6, 0))
             tk.Label(body, text=f"파일 이름 '{nm}'  ·  ERP {menu}  →  {use}", bg=C["card"], fg=C["hint"], font=F(8),
                      anchor="w").grid(row=i * 2 + 1, column=1, columnspan=2, sticky="w")
-            FlatButton(body, "선택", lambda k=key, l=label: self.pick(k, l), kind="soft", size=9, padx=12, pady=4).grid(
-                row=i * 2, column=3, rowspan=2, padx=(10, 0), pady=(6, 0))
+            if key == "income":
+                # 수입일보 [선택] 바로 아래 [지출 포함] (사용자 제안 2026-11-04): 지출 있는 날만 품목·거래처·금액을 적는다
+                FlatButton(body, "선택", lambda k=key, l=label: self.pick(k, l), kind="soft", size=9, padx=12, pady=4).grid(
+                    row=i * 2, column=3, sticky="ew", padx=(10, 0), pady=(6, 0))
+                self.exp_btn = FlatButton(body, "지출 포함", self.edit_expenses, kind="soft", size=9, padx=12, pady=4)
+                self.exp_btn.grid(row=i * 2 + 1, column=3, sticky="ew", padx=(10, 0), pady=(4, 0))
+            else:
+                FlatButton(body, "선택", lambda k=key, l=label: self.pick(k, l), kind="soft", size=9, padx=12, pady=4).grid(
+                    row=i * 2, column=3, rowspan=2, padx=(10, 0), pady=(6, 0))
             self.rows[key] = (icon, file_lbl, required)
         i = len(cv.DAILY_SLOTS)
         self.folio_icon = tk.Label(body, text="", bg=C["card"], font=F(13, True), width=2)
@@ -213,27 +220,12 @@ class DailyDialog(tk.Toplevel):
                  bg=C["card"], fg=C["hint"], font=F(8), anchor="w").grid(row=i * 2 + 1, column=1, columnspan=2, sticky="w")
         FlatButton(body, "선택", self.pick_folios, kind="soft", size=9, padx=12, pady=4).grid(
             row=i * 2, column=3, rowspan=2, padx=(10, 0), pady=(6, 0))
-        # 지출 (사용자 지시 2026-11-03): 있는 날만 적으면 수입일보 마지막 계 아래에 회색 줄 + 지출 줄
-        i += 1
-        self.exp_icon = tk.Label(body, text="", bg=C["card"], font=F(13, True), width=2)
-        self.exp_icon.grid(row=i * 2, column=0, rowspan=2, sticky="n", pady=(6, 0))
-        tk.Label(body, text="지출 (있을 때만)", bg=C["card"], fg=C["text"], font=F(10, True)).grid(
-            row=i * 2, column=1, sticky="w", pady=(6, 0))
-        self.exp_lbl = tk.Label(body, text="", bg=C["card"], font=F(9), anchor="w")
-        self.exp_lbl.grid(row=i * 2, column=2, sticky="w", padx=(10, 0), pady=(6, 0))
-        tk.Label(body, text="오늘 지출한 품목·거래처·금액 → ① 수입일보 맨 아래 (회색 줄 다음, 계에는 안 더함)",
-                 bg=C["card"], fg=C["hint"], font=F(8), anchor="w").grid(row=i * 2 + 1, column=1, columnspan=2, sticky="w")
-        FlatButton(body, "입력", self.edit_expenses, kind="soft", size=9, padx=12, pady=4).grid(
-            row=i * 2, column=3, rowspan=2, padx=(10, 0), pady=(6, 0))
         self.out_lbl = tk.Label(self, text="", bg=C["bg"], fg=C["text"], font=F(9), justify="left", anchor="w", padx=18,
                                 wraplength=int(760 * UI_SCALE))
         self.out_lbl.pack(fill="x", pady=(10, 0))
         bar = tk.Frame(self, bg=C["bg"], padx=14, pady=12)
         bar.pack(fill="x")
         FlatButton(bar, "ERP원본 폴더 열기", app.open_erp_folder, kind="soft", size=10, pady=8).pack(side="left")
-        # 지출 입력은 아래 버튼 줄에도 (2026-11-04: 작은 화면에서 창 아래가 잘려 '지출' 줄이 안 보인다는 보고)
-        self.exp_btn = FlatButton(bar, "지출 입력", self.edit_expenses, kind="soft", size=10, pady=8)
-        self.exp_btn.pack(side="left", padx=(8, 0))
         self.go = FlatButton(bar, "변환 시작  ▶", self.start, size=11, pady=8, padx=24)
         self.go.pack(side="right")
         FlatButton(bar, "닫기", self.destroy, kind="ghost", size=10, pady=8).pack(side="right", padx=(0, 8))
@@ -243,7 +235,7 @@ class DailyDialog(tk.Toplevel):
         if self.winfo_reqheight() > self.winfo_screenheight() - 90:
             self.compact = True
             for w in body.grid_slaves():
-                if int(w.grid_info().get("row", 0)) % 2 == 1:
+                if int(w.grid_info().get("row", 0)) % 2 == 1 and w is not self.exp_btn:
                     w.grid_remove()
             self.refresh()
         self.bind("<Escape>", lambda e: self.destroy())
@@ -309,16 +301,14 @@ class DailyDialog(tk.Toplevel):
                 lbl.configure(text="없음" + (" — 폴더에 저장하거나 [선택]" if required else " (없어도 됨)"),
                               fg=C["err"] if required else C["sub"])
         ex = self.app.daily_overrides.get("expenses") or []
-        self.exp_icon.configure(text="✔" if ex else "–", fg=C["ok"] if ex else C["sub"])
-        self.exp_lbl.configure(text=(f"{len(ex)}건 · {sum(e.get('amount') or 0 for e in ex):,.0f}원" if ex else "없음 (지출 없는 날은 그대로)"),
-                               fg=C["ok"] if ex else C["sub"])
-        self.exp_btn.configure(text=f"지출 입력 ({len(ex)}건)" if ex else "지출 입력")
+        self.exp_btn.configure(text=f"지출 {len(ex)}건 ✔" if ex else "지출 포함")
         n = len(plan["folios"])
         self.folio_icon.configure(text="✔" if n else "–", fg=C["ok"] if n else C["sub"])
         self.folio_lbl.configure(text=f"{n}개" if n else "없음 (없어도 됨)", fg=C["ok"] if n else C["sub"])
         has = lambda k: bool(plan.get(k))
         lines = [
-            ("① 수입일보", has("income"), "어제 일보 이어받기" if has("prev_report") else "어제 일보 없음 → 도착일부터"),
+            ("① 수입일보", has("income"), ("어제 일보 이어받기" if has("prev_report") else "어제 일보 없음 → 도착일부터")
+             + (f" + 지출 {len(ex)}건" if ex else "")),
             ("② 카드 승인내역", has("card"), "객실 자동 채우기: " + " + ".join(
                 x for x, ok in (("객실조회", has("rooms")), ("수입일보 결제", has("income"))) if ok) if has("rooms") or has("income")
              else "객실 칸은 직접 입력"),
