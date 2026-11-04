@@ -231,12 +231,25 @@ class DailyDialog(tk.Toplevel):
         bar = tk.Frame(self, bg=C["bg"], padx=14, pady=12)
         bar.pack(fill="x")
         FlatButton(bar, "ERP원본 폴더 열기", app.open_erp_folder, kind="soft", size=10, pady=8).pack(side="left")
+        # 지출 입력은 아래 버튼 줄에도 (2026-11-04: 작은 화면에서 창 아래가 잘려 '지출' 줄이 안 보인다는 보고)
+        self.exp_btn = FlatButton(bar, "지출 입력", self.edit_expenses, kind="soft", size=10, pady=8)
+        self.exp_btn.pack(side="left", padx=(8, 0))
         self.go = FlatButton(bar, "변환 시작  ▶", self.start, size=11, pady=8, padx=24)
         self.go.pack(side="right")
         FlatButton(bar, "닫기", self.destroy, kind="ghost", size=10, pady=8).pack(side="right", padx=(0, 8))
         self.refresh()
+        # 창이 화면보다 길면(1366×768·Windows 배율 125% 등) 파일마다 붙은 설명 줄을 숨겨 아래 버튼까지 보이게
+        self.update_idletasks()
+        if self.winfo_reqheight() > self.winfo_screenheight() - 90:
+            self.compact = True
+            for w in body.grid_slaves():
+                if int(w.grid_info().get("row", 0)) % 2 == 1:
+                    w.grid_remove()
+            self.refresh()
         self.bind("<Escape>", lambda e: self.destroy())
         self.grab_set()
+
+    compact = False
 
     def load_all(self):
         """폴더에서 영업일자 파일을 전부 다시 불러온다 (직접 고른 파일은 지우고 폴더 것으로)"""
@@ -299,6 +312,7 @@ class DailyDialog(tk.Toplevel):
         self.exp_icon.configure(text="✔" if ex else "–", fg=C["ok"] if ex else C["sub"])
         self.exp_lbl.configure(text=(f"{len(ex)}건 · {sum(e.get('amount') or 0 for e in ex):,.0f}원" if ex else "없음 (지출 없는 날은 그대로)"),
                                fg=C["ok"] if ex else C["sub"])
+        self.exp_btn.configure(text=f"지출 입력 ({len(ex)}건)" if ex else "지출 입력")
         n = len(plan["folios"])
         self.folio_icon.configure(text="✔" if n else "–", fg=C["ok"] if n else C["sub"])
         self.folio_lbl.configure(text=f"{n}개" if n else "없음 (없어도 됨)", fg=C["ok"] if n else C["sub"])
@@ -311,8 +325,11 @@ class DailyDialog(tk.Toplevel):
             ("③ 대외후불 리스트", has("credit"), ""),
             ("④·⑤ 조식명단 · 조식 인원수", has("inhouse"), "IN HOUSE + 객실조회" if has("rooms") else "IN HOUSE만 (도착 예정 빠짐)"),
         ]
-        self.out_lbl.configure(text="만들어질 서류\n" + "\n".join(
-            f"   {'✔' if ok else '✖  (파일 없음)'} {name}" + (f"  —  {note}" if ok and note else "") for name, ok, note in lines))
+        if self.compact:  # 작은 화면: 한 줄로
+            self.out_lbl.configure(text="만들어질 서류:  " + "   ".join(f"{'✔' if ok else '✖'} {name}" for name, ok, _ in lines))
+        else:
+            self.out_lbl.configure(text="만들어질 서류\n" + "\n".join(
+                f"   {'✔' if ok else '✖  (파일 없음)'} {name}" + (f"  —  {note}" if ok and note else "") for name, ok, note in lines))
         self.go.set_enabled(any(ok for _, ok, _ in lines))
 
     def start(self):
