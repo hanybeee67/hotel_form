@@ -680,7 +680,7 @@ def _fit_pages(ws, hrow, first, last, right, pages, fill=False, min_ratio=0.75, 
         target = n * per_page * 0.97  # 행 단위로 쪽이 나뉘므로 약간 여유를 둔다
     else:
         target = pages * per_page
-    if fill and n == 2 and _fill_two_equal_pages(ws, first, last, right, usable_h, repeat):
+    if fill and n <= 2 and _fill_two_equal_pages(ws, first, last, right, usable_h, repeat, n, hrow):
         return
     if body and (fill or body > target):
         k = target / body
@@ -714,36 +714,54 @@ def _row_floor(ws, r, right):
     return size * 1.3 * lines
 
 
-def _fill_two_equal_pages(ws, first, last, right, usable_h, repeat):
-    """조식명단 2장 (사용자 지시 2026-10-27: 두 장을 나란히 놓으므로 표 크기가 똑같고 맨 아래 줄이 딱 맞아야 함).
-    모든 행을 같은 높이(한 칸)로 만들고, 1쪽 k칸 / 2쪽 k칸이 되도록 수동 쪽 나눔을 넣는다.
-    2쪽 마지막 행(안내 문구)은 남는 칸 수만큼 높이를 차지해 두 쪽의 맨 아래 선이 같아진다.
+# 엑셀은 행 높이를 화면 점(픽셀) 단위로 반올림해 그린다 (96dpi: 0.75pt, 144dpi: 0.5pt …).
+# 23.01pt처럼 어중간한 높이는 칸마다 조금씩 커져 28칸이면 1쪽이 넘치고, 넘친 줄이 2쪽으로 밀려
+# 1쪽 아래가 비고 두 쪽 길이가 달라진다 (사용자 보고 2026-11-08) → 칸 높이를 1.5pt 단위로 맞추고 여유를 둔다
+ROW_STEP = 1.5
+
+
+def _fill_two_equal_pages(ws, first, last, right, usable_h, repeat, pages=2, hrow=None):
+    """조식명단 A4 꽉 채우기 (사용자 지시 2026-10-27, 2026-11-08 보정):
+    1장이면 그 쪽을, 2장이면 두 쪽을 **같은 길이로 종이 끝까지** 채운다 (두 장을 나란히 놓으므로 맨 아래 줄이 딱 맞아야 함).
+    - 모든 본문 행을 같은 높이(한 칸, ROW_STEP 단위)로, 2장이면 1쪽 k칸 / 2쪽 k칸 + 수동 쪽 나눔
+    - 마지막 행(안내 문구)은 남는 칸 수만큼 높이를 차지해 두 쪽의 맨 아래 선이 같아진다
+    - 칸 높이를 단위로 내리며 생긴 자투리는 쪽마다 반복되는 제목·머리글 행에 나눠 붙여 표 끝이 종이 끝까지 닿게 한다
     '맞춤' 인쇄는 수동 쪽 나눔을 무시하므로 배율 100%로 인쇄한다(너비는 _scale_sheet가 이미 맞춤). 안 되면 False."""
-    scale_pct = 100
-    per_page = (usable_h - repeat) * 0.98  # 쪽마다 표 본문이 쓸 수 있는 높이 (여유 2%)
+    space = (usable_h - repeat) * 0.985  # 쪽마다 표 본문이 쓸 수 있는 높이 (프로그램마다 다른 반올림 여유 1.5%)
     others = last - first  # 마지막 행(안내 문구 또는 합계) 앞까지의 행 수
+    if others < 1:
+        return False
     floor_other = max(_row_floor(ws, r, right) for r in range(first, last))
     floor_last = _row_floor(ws, last, right)
-    k = max(1, -(-(others + 1) // 2))
+    snap = lambda v: int(v / ROW_STEP) * ROW_STEP
+    k = max(1, -(-(others + 1) // pages))
     for _ in range(10):  # 칸 높이 ↔ 마지막 행이 차지할 칸 수가 서로 맞을 때까지
-        h = per_page / k
+        h = snap(space / k)
         m = max(1, -(-floor_last // h)) if h else 1
-        k_new = max(1, -(-(others + int(m)) // 2))
+        k_new = max(1, -(-(others + int(m)) // pages))
         if k_new == k:
             break
         k = k_new
-    h = per_page / k
-    if h < floor_other or k > others:  # 2장 안에 안 들어가거나 1쪽을 채울 행이 모자라면 포기
+    h = snap(min(409, space / k))
+    if h < floor_other or (pages == 2 and k > others):  # 안 들어가거나 1쪽을 채울 행이 모자라면 포기
         return False
     for r in range(first, last):
-        ws.row_dimensions[r].height = round(h, 2)
-    ws.row_dimensions[last].height = round(h * (2 * k - others), 2)
+        ws.row_dimensions[r].height = h
+    ws.row_dimensions[last].height = min(409, h * (pages * k - others))
+    # 자투리 → 제목·머리글 행(쪽마다 반복)에 나눠 붙임
+    rest = snap(space - k * h)
+    heads = list(range(1, (hrow or first - 1) + 1))
+    if rest > 0 and heads:
+        add = snap(rest / len(heads))
+        for r in heads:
+            ws.row_dimensions[r].height = round((ws.row_dimensions[r].height or 15) + add, 2)
     ws.row_breaks.brk = []
-    ws.row_breaks.append(Break(id=first + k - 1))  # 1쪽 = 머리글 + k칸
+    if pages == 2:
+        ws.row_breaks.append(Break(id=first + k - 1))  # 1쪽 = 머리글 + k칸
     ps = ws.page_setup
-    ps.scale = scale_pct
+    ps.scale = 100
     ws.sheet_properties.pageSetUpPr.fitToPage = False
-    ps.fitToWidth, ps.fitToHeight = 1, 2
+    ps.fitToWidth, ps.fitToHeight = 1, pages
     return True
 
 
@@ -1213,7 +1231,11 @@ def _bf_people(remark, conv, guest=None):
 
 def _names_count(guest):
     """투숙객명 '홍길동/김철'처럼 여러 이름이 적혀 있으면 이름 수 (1명이면 None)"""
-    parts = [p for p in re.split(r"[/,，·]", guest or "") if p.strip()]
+    g = guest or ""
+    # 쉼표: 'Smith, Anna'·'Lee, Ming Hua'처럼 영문 '성, 이름'은 한 사람 (사용자 보고 2026-11-08: 301·411·508이 1명인데 2명으로 잡힘)
+    # → 쉼표 옆에 한글이 있을 때('홍길동, 김철')만 여러 사람으로 센다. '/'는 언제나 여러 사람
+    sep = r"[/·]" if re.search(r"[A-Za-z]", g) and not re.search(r"[가-힣]\s*[,，]|[,，]\s*[가-힣]", g) else r"[/,，·]"
+    parts = [p for p in re.split(sep, g) if p.strip()]
     return len(parts) if len(parts) > 1 else None
 
 
@@ -1488,7 +1510,11 @@ def read_prev_report(path, prev_date):
             continue
         arr = to_date(r[c_arr][0]) if c_arr is not None else ""
         pp = clean_text(r[c_pp][0]) if c_pp is not None else ""
-        out[room] = (arr, int(n), sales or 0, int(cum) if float(cum).is_integer() else cum, pp)
+        key, i = room, 1
+        while key in out:  # 같은 객실 줄이 여러 개(계정이 따로)면 '0302#2'처럼 따로 기억 (2026-11-08)
+            i += 1
+            key = f"{room}#{i}"
+        out[key] = (arr, int(n), sales or 0, int(cum) if float(cum).is_integer() else cum, pp)
     return out
 
 
@@ -1496,7 +1522,7 @@ def _income_sections(records, bdate, conv, warnings, folios=None, partners=None,
     """수입일보를 호텔 실제 일보 모양으로 (사용자 지시 2026-10-28, 실제 10/28 일보로 확인).
     - 매출구분(ROOM · Extra-Charge · 1회용품 · 조식 · 연회 …) 묶음을 ERP 순서대로, 묶음마다 계 줄(앞 묶음까지 이어서 합산)
     - 매출 0 줄(CASH·카드·선수금 등)은 뺀다. 객실번호 범위와 상관없이 매출이 잡힌 줄은 모두 (1030 외부 조식 포함)
-    - ROOM 줄: 객실마다 한 줄(같은 객실이 또 있으면 금액 합산), 숙박수 = 이번 달 묵은 날 수, 누계 = 매출 × 숙박수
+    - ROOM 줄: ERP 줄 그대로(같은 객실이 또 있어도 합치지 않음, 2026-11-08), 숙박수 = 이번 달 묵은 날 수, 누계 = 매출 × 숙박수
     - 다른 묶음: 투숙객명 옆에 (EXTRA CHARGE)/(조식) 같은 표시, 숙박수 빈칸, 누계 = 매출"""
     room_kind = norm(conv.get("room_kind", "ROOM"))
     labels = {norm(k): v for k, v in conv.get("kind_labels", {}).items()}
@@ -1528,18 +1554,29 @@ def _income_sections(records, bdate, conv, warnings, folios=None, partners=None,
     for sec, key in enumerate(order):
         rows = groups[key]
         if key == room_kind:
-            by_room = {}
+            # 같은 객실에 ROOM 줄이 여러 개여도 합치지 않고 ERP 리스트 그대로 한 줄씩 (사용자 지시 2026-11-08:
+            # 방은 1개라도 payment가 2개면 계정이 따로일 수 있음 → 금액을 합치지 않고 별개로 출력)
+            rows = [dict(r) for r in rows]
+            seen = {}
             for rec in rows:
-                k = rec.get("room") or id(rec)
-                if k in by_room:
-                    by_room[k]["sales"] += rec["sales"]
-                    merged.append(rec.get("room"))
-                else:
-                    by_room[k] = dict(rec)
-            rows = list(by_room.values())
+                if rec.get("room"):
+                    seen[rec["room"]] = seen.get(rec["room"], 0) + 1
+            merged = sorted(r for r, n in seen.items() if n > 1)
+            prev_left = dict(prev_rep or {})
+
+            def take_prev(rec):
+                """어제 일보에서 이 줄의 이전 기록: 같은 객실 + 같은 도착일(같은 손님), 줄이 여러 개면 매출이 같은 줄 먼저"""
+                room = rec.get("room")
+                keys = [k for k in prev_left if k == room or k.startswith(f"{room}#")]
+                keys = [k for k in keys if not prev_left[k][0] or prev_left[k][0] == rec.get("arrival")]
+                keys.sort(key=lambda k: prev_left[k][2] != (rec.get("sales") or 0))
+                return prev_left.pop(keys[0]) if keys else None
+            folio_done = set()
             for rec in rows:
                 rec["nights"] = _nights_so_far(rec.get("arrival"), rec.get("departure"), bdate)
-                if rec.get("room") in (folios or {}):
+                prev_line = None
+                if rec.get("room") in (folios or {}) and rec["room"] not in folio_done:
+                    folio_done.add(rec["room"])  # 거래내역은 객실 단위 → 그 객실 첫 줄에만
                     prev, n = folio_balance(folios[rec["room"]], bdate)
                     last = max((d for d, _, _ in folios[rec["room"]]), default="")
                     if last and last < (bdate - dt.timedelta(days=1)).isoformat():
@@ -1553,10 +1590,9 @@ def _income_sections(records, bdate, conv, warnings, folios=None, partners=None,
                         odd.append(f"{rec['room']}(잔액 {prev + rate:,.0f}원, {n}박)")
                     rec["nights"] = n
                     used.append(f"{rec['room']}({prev + (rec.get('sales') or 0):,.0f}원)")
-                elif rec.get("room") in (prev_rep or {}) and (not prev_rep[rec["room"]][0]
-                                                               or prev_rep[rec["room"]][0] == rec.get("arrival")):
+                elif (prev_line := take_prev(rec)) is not None:
                     # 어제 일보 이어받기: 누계 = 어제 누계 + 오늘 매출, 숙박수 = 어제 + 1 (같은 손님 = 도착일이 같을 때만)
-                    _, pn, _, pcum, pp = prev_rep[rec["room"]]
+                    _, pn, _, pcum, pp = prev_line
                     if pp:
                         rec["prepost"] = pp  # 계속 묵는 손님은 선/후도 어제 일보 그대로 (오늘 결제보다 우선)
                     rate = rec.get("sales") or 0
@@ -1595,7 +1631,8 @@ def _income_sections(records, bdate, conv, warnings, folios=None, partners=None,
                 rec["_no_fill"] = True
         for rec in rows:
             if not rec.get("prepost"):
-                rec["prepost"] = paid_label(rec)
+                # 선/후: 어제 일보 → 오늘 결제 → 그래도 없으면 '후' (사용자 지시 2026-11-08: 빈칸은 대부분 후)
+                rec["prepost"] = paid_label(rec) or conv.get("prepost_default") or None
         rows.sort(key=_room_key)
         for rec in rows:
             rec["_sec"] = sec
@@ -1603,7 +1640,8 @@ def _income_sections(records, bdate, conv, warnings, folios=None, partners=None,
     if zero:
         warnings.append(f"매출이 0인 줄 {len(zero)}건(CASH·카드·선수금 등)은 뺐습니다.")
     if merged:
-        warnings.append("ROOM 매출이 두 줄 이상인 객실은 금액을 더해 한 줄로 넣었습니다: " + ", ".join(sorted(set(merged))))
+        warnings.append("ROOM 매출이 두 줄 이상인 객실은 계정이 따로일 수 있어 합치지 않고 ERP 그대로 한 줄씩 넣었습니다: "
+                        + ", ".join(merged))
     if bad:
         warnings.append("도착일을 알 수 없어 숙박수를 비워 둔 객실(노란 칸): " + ", ".join(bad))
     if used:

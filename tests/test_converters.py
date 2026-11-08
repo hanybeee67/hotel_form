@@ -421,6 +421,17 @@ def test_nights(arr, dep, n):
     assert cv._nights(arr, dep) == n
 
 
+def test_names_count_western_comma():
+    """영문 '성, 이름'은 한 사람 (사용자 보고 2026-11-08: 301·411·508이 1명인데 2명으로 잡힘)"""
+    assert cv._names_count("Smith, Anna") is None
+    assert cv._names_count("Lee, Ming Hua") is None
+    assert cv._names_count("홍길동, 김철") == 2
+    assert cv._names_count("홍길동/김철") == 2
+    assert cv._names_count("Smith John/Kim Lee") == 2
+    rec = {"guest": "Smith, Anna", "adults": 1, "children": 0}
+    assert cv._pax_fallback(rec)[0] == 1
+
+
 def _bf_fill_ratio(ws):
     """조식명단 본문이 N쪽 공간을 얼마나 채우는지 (1.0 = 꽉 참)"""
     m = ws.page_margins
@@ -474,6 +485,11 @@ def test_breakfast_two_pages_same_size(cfg, tmp_path, monkeypatch, n_rooms):
     page1 = sum(ws.row_dimensions[r].height for r in range(3, cut + 1))
     page2 = sum(ws.row_dimensions[r].height for r in range(cut + 1, last + 1))
     assert abs(page1 - page2) < 0.5, (page1, page2)
+    # 엑셀이 픽셀 단위로 반올림해도 넘치지 않게 칸 높이는 1.5pt 단위, 제목·머리글 + 본문 = 쪽 높이의 98.5% 이상 (2026-11-08)
+    assert all(ws.row_dimensions[r].height % cv.ROW_STEP == 0 for r in range(3, last))
+    usable = 842 - (ws.page_margins.top + ws.page_margins.bottom) * 72
+    used = ws.row_dimensions[1].height + ws.row_dimensions[2].height + page1
+    assert usable * 0.97 <= used <= usable, (used, usable)
     assert ws.cell(last, 1).value.startswith("조식 명단에")  # 안내 문구가 2쪽 맨 아래
 
 
@@ -787,6 +803,22 @@ def test_income_carries_previous_report(cfg, tmp_path):
     assert any("일보1021" in w for w in res2["warnings"])
 
 
+def test_income_same_room_lines_kept_separate(cfg, tmp_path):
+    """같은 객실 ROOM 줄이 둘이면 합치지 않고 ERP 그대로 두 줄 (사용자 지시 2026-11-08: payment가 2개면 계정이 따로일 수 있음).
+    어제 일보도 두 줄이면 줄마다(매출이 같은 줄) 이어받는다."""
+    def row(room, guest, sales, arr="2026-10-20"):
+        return ["ROOM", guest, arr, "2026-11-20", "D/T", "회사", room, "", 0, 0, "", "", 1, 0, 0, 0, 0, sales, 0]
+    out = tmp_path / "out"
+    day1 = [INCOME[0], row("0301", "가상손님A", 100000), row("0301", "가상손님B", 50000)]
+    cv.convert_file("income", _xlsx(tmp_path / "d1.xlsx", day1), str(out), "2026-10-21", cfg)
+    day2 = [INCOME[0], row("0301", "가상손님B", 50000), row("0301", "가상손님A", 100000)]
+    res = cv.convert_file("income", _xlsx(tmp_path / "d2.xlsx", day2), str(out), BDATE, cfg)
+    _, v = _values(res["output"])
+    lines = [(r[0], r[1], r[6], r[7]) for r in v[2:4]]
+    assert sorted(lines) == [("0301", "가상손님A", 3, 100000), ("0301", "가상손님B", 3, 50000)]
+    assert any("합치지 않고" in w for w in res["warnings"])
+
+
 def test_income_prepost_prefill(cfg, tmp_path):
     """선/후 미리 채우기 (2026-11-02): 오늘 결제 줄(카드→카.선, CASH→현.선, 대외후불→온라인결제), 계속 묵는 손님은 어제 값.
     서식은 11/01 수작업 일보 표준(제목 50.1 · 줄 33.95)."""
@@ -796,8 +828,8 @@ def test_income_prepost_prefill(cfg, tmp_path):
             row("ROOM", "0304", 90000), row("카드", "0301", 0, 100000), row("대외후불", "0302", 0, 90000)]
     res = cv.convert_file("income", _xlsx(tmp_path / "수입.xlsx", rows), str(tmp_path / "out"), BDATE, cfg)
     ws, v = _values(res["output"])
-    assert [r[5] for r in v[2:6]] == ["카.선", "온라인결제", None, None]
-    assert ws["F5"].value is None and ws["F5"].fill.fill_type in (None, "none")  # 수입일보는 노란 칸 없음 (2026-11-03)
+    assert [r[5] for r in v[2:6]] == ["카.선", "온라인결제", "후", "후"]  # 빈칸은 '후' (사용자 지시 2026-11-08)
+    assert ws["F5"].fill.fill_type in (None, "none")  # 수입일보는 노란 칸 없음 (2026-11-03)
 
 
 def test_card_room_from_income_payment(cfg, tmp_path):

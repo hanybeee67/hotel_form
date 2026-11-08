@@ -87,6 +87,7 @@
       "_줄높이": "11/01 표준 줄 높이(33.95) 그대로 — 2장에 맞추려고 줄이지 않음 (사용자 지시 2026-11-02: 줄 간격이 같아야 인쇄하기 편함)",
       "fit_pages": null,
       "prepost_by_payment": {"카드": "카.선", "CASH": "현.선", "현금": "현.선", "대외후불": "온라인결제"},
+      "prepost_default": "후",
       "check_total": true,
       "number_format": "#,##0",
       "warn_missing": ["guest", "company", "arrival", "departure"],
