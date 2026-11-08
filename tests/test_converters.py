@@ -432,6 +432,20 @@ def test_names_count_western_comma():
     assert cv._pax_fallback(rec)[0] == 1
 
 
+@pytest.mark.parametrize("raw,want", [
+    ("주간 - 홍길동", "홍0동"), ("야간_김철", "김0"), ("(주간)홍길동", "홍0동"), ("가상회사 주간-홍길동", "홍0동"),
+    ("세금계산서 발행 - 홍길동", "홍0동"), ("홍길동 세금계산서", "홍0동"), ("홍길동 외 2명", "홍0동"), ("홍길동(VIP)", "홍0동"),
+    ("가상상사 홍길동", "홍0동"), ("가상협회 - 홍길동, 김철", "홍0동/김0"), ("1월2일 ABC (홍길동)", "홍0동"),
+    ("가상그룹-Noah Kim", "Noah Kim"), ("가상상사 Mr. Anna Smith", "Anna Smith"), ("가상상사 - 504호 SMITH, ANNA", "SMITH, ANNA"),
+    ("Smith, Anna", "Smith, Anna"), ("가상상사JOHN DOE", "JOHN DOE"),
+    ("가상협회(경기도)", "가상협회(경기도)"), ("가상 코리아", "가상 코리아"), ("가상상사 - 504호", "가상상사"),
+    ("가상상사-내국인", "가상상사"), ("가상상사 외국인 10/20까지", "가상상사"), ("ABC", "ABC"),
+])
+def test_breakfast_person_name_only(cfg, raw, want):
+    """조식명단 이름 칸에는 사람 이름만, 한국 이름은 가운데 0 (사용자 지시 2026-11-08: 주간·야간·세금계산서 같은 말은 빼기)"""
+    assert cv.breakfast_guest(raw, cfg, cfg["converters"]["breakfast"]) == want
+
+
 def _bf_fill_ratio(ws):
     """조식명단 본문이 N쪽 공간을 얼마나 채우는지 (1.0 = 꽉 참)"""
     m = ws.page_margins

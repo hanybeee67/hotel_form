@@ -1353,6 +1353,105 @@ def mask_korean_name(name, mark="0"):
     return s[0] + mark * (len(s) - 2) + s[-1]
 
 
+# 조식명단 이름 칸에서 빼는 말 (사람 이름이 아님): 근무조·직책·결제·서류 안내 등 (사용자 지시 2026-11-08)
+_NOT_NAME_WORDS = _LABEL_WORDS | {
+    "세금계산서", "계산서", "세금", "발행", "영수증", "법인", "법인카드", "카드", "현금", "후불", "선불", "선결제", "입금",
+    "메일", "예약", "예약자", "담당", "담당자", "대표", "손님", "고객", "투숙객", "님", "외", "일행", "VIP", "vip",
+    "주간조", "야간조", "근무", "교대", "숙소", "기숙", "출장", "연박", "장박", "1차", "2차", "추가",
+    "내국인", "외국인", "계산", "부터", "까지", "Mr", "Mrs", "Ms", "Miss", "Dr"}
+# 지역 이름 (괄호 안 '경기도' 등은 사람 이름이 아님)
+_REGION_WORDS = {"경기도", "강원도", "충청도", "전라도", "경상도", "제주도", "충북", "충남", "전북", "전남", "경북", "경남",
+                 "서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "제주", "청주", "충주", "천안", "수원"}
+# 두 글자 이름(외자)은 흔한 성으로 시작할 때만 이름으로 본다 ('가상-내국인'의 '가상'은 회사 이름)
+_COMMON_SURNAMES = set("김이박최정강조윤장임한오서신권황안송류유전홍고문양손배백허남심노하곽성차주우구민나진지엄채원천방공현함변염여추도소석선설마길연위표명기반왕금옥육인맹제모탁국어은편용봉경")
+
+
+def person_name_only(name):
+    """조식명단 이름 칸에는 **사람 이름만** (사용자 지시 2026-11-08: 주간·야간·세금계산서 같은 말은 넣지 말 것).
+    - 꼬리표·결제 안내 낱말(주간·야간·세금계산서 …), 'NNN호'·숫자·'외 N명'·날짜는 뺀다
+    - 한국 이름이 있으면 그 이름만 ('가상회사 주간-홍길동' → '홍길동', '세금계산서 김철' → '김철'),
+      바깥에 없으면 괄호 안 이름 ('1월2일 ABC (홍길동)' → '홍길동')
+    - 없으면 영문 이름 ('가상그룹-Noah Kim' → 'Noah Kim', 'Smith, Anna'는 그대로, Mr.·Ms. 같은 호칭은 뺌)
+    - 사람 이름이 없으면(회사·단체명만) 안내 낱말·호수만 빼고 그대로 ('가상협회(경기도)'는 그대로)
+    '/'(와 한글 옆 쉼표)로 여러 사람이 적혀 있으면 사람마다 따로 (홍길동/김철)."""
+    s = re.sub(r"[ㄱ-ㅎㅏ-ㅣ]", "", (name or "")).strip()  # 잘못 눌린 자모
+    if not s:
+        return name
+    if re.search(r"(?<!\d)/(?!\d)|[가-힣]\s*[,，]|[,，]\s*[가-힣]", s):  # '10/20'(날짜)은 나누지 않음
+        sep = r"\s*(?:(?<!\d)/(?!\d)|(?<=[가-힣])\s*[,，]|[,，](?=\s*[가-힣]))\s*"
+        parts = [person_name_only(p) for p in re.split(sep, s) if p.strip()]
+        return "/".join(p for p in parts if p) or s
+    seps = r"\s\-_:·.~|"
+    core = re.sub(r"([가-힣])([A-Za-z])", r"\1 \2", re.sub(r"([A-Za-z])([가-힣])", r"\1 \2", s))
+    inner = " ".join(re.findall(r"\(([^)]*)\)|\[([^\]]*)\]", core) and
+                     [x for g in re.findall(r"\(([^)]*)\)|\[([^\]]*)\]", core) for x in g if x])
+    core = re.sub(r"\([^)]*\)|\[[^\]]*\]", " ", core)  # 괄호 안 글은 이름이 아님 (바깥에 이름이 없을 때만 봄)
+    core = re.sub(r"외\s*\d+\s*(?:명|인)?|(?:\d+\s*월\s*\d+\s*일|\d+\s*/\s*\d+)\s*(?:부터|까지)?", " ", core)
+    junk = lambda t: t in _NOT_NAME_WORDS or bool(re.fullmatch(r"\d+(?:호|실|명|인|월|일)?", t))
+    person = lambda t: bool(_ERP_MASKED.fullmatch(t)) or (is_korean_person_name(t) and t not in _REGION_WORDS
+                                                           and (len(t) != 2 or t[0] in _COMMON_SURNAMES))
+    latin = lambda t: bool(re.fullmatch(r"[A-Za-z][A-Za-z',]*", t))
+
+    def pick(text):
+        # 낱말과 그 앞 구분자: '가상회사 주간-홍길동' → [('', 가상회사), (' ', 주간), ('-', 홍길동)]
+        seq = [(m.group(1), m.group(2)) for m in re.finditer(rf"([{seps}]*)([^{seps}]+)", text)]
+        toks = [t for _, t in seq]
+        rest, carry = [], ""
+        for i, (sep, t) in enumerate(seq):
+            if junk(t):  # 뺀 낱말 앞의 '-'는 다음 낱말로 넘김 ('가상상사 - 504호 SMITH,ANNA' → SMITH,ANNA는 '-' 뒤)
+                carry = carry or (sep if re.search(r"[\-_:]", sep) else "")
+                continue
+            rest.append((i, carry + sep, t))
+            carry = ""
+        # 한국 이름으로 인정 (회사 이름 일부를 이름으로 오인하지 않게, 예: '가상 코리아'):
+        # ① 남은 낱말이 그것 하나 ② '-'·'_'·':' 뒤 또는 꼬리표 바로 뒤 ③ 회사 낱말 바로 뒤의 마지막 낱말
+        for k in range(len(rest) - 1, -1, -1):
+            i, sep, t = rest[k]
+            if not person(t):
+                continue
+            after_label = i > 0 and junk(toks[i - 1])
+            after_company = k == len(rest) - 1 and k > 0 and bool(_COMPANY_WORDS.search(rest[k - 1][2]))
+            if len(rest) == 1 or re.search(r"[\-_:]", sep) or after_label or after_company:
+                return t
+        # 영문 이름: 마지막 '-' 뒤가 모두 영문이면 그것, 아니면 끝쪽 영문 낱말이 2개 이상일 때
+        words = [(sep, t) for _, sep, t in rest]
+        cut = max((k for k, (sep, _) in enumerate(words) if re.search(r"[\-_:]", sep)), default=None)
+        tail = words[cut:] if cut is not None else []
+        if not tail or not all(latin(t) for _, t in tail):
+            tail = []
+            for sep, t in reversed(words):
+                if not latin(t):
+                    break
+                tail.insert(0, (sep, t))
+            if len(tail) < 2 and not (tail and "," in tail[0][1]):  # 'SMITH,ANNA'처럼 쉼표 있는 한 낱말은 이름
+                tail = []
+        names = [t for _, t in tail if t.lower().rstrip(".") not in ("mr", "mrs", "ms", "miss", "dr")]
+        return " ".join(names) if names else None
+
+    # 괄호 안 이름은 바깥에 이름도 회사 이름도 없을 때만 ('1월2일 ABC (홍길동)' → 홍길동, '가상협회(경기도)'는 아님)
+    got = pick(core) or (pick(inner) if inner and not _COMPANY_WORDS.search(core) else None)
+    if got:
+        return got
+    # 사람 이름이 없음 (회사·단체명) → 안내 낱말·호수만 빼고 원래 모양 유지
+    out = s
+    for w in sorted(_NOT_NAME_WORDS, key=len, reverse=True):
+        if len(w) >= 2:
+            out = re.sub(rf"(^|[{seps}]){re.escape(w)}(?=$|[{seps}])", " ", out)
+    out = re.sub(r"(?:\d+\s*월(?:\s*\d+\s*일)?|\d+\s*/\s*\d+)\s*(?:부터|까지)?", " ", out)  # 날짜
+    out = re.sub(rf"(^|[{seps}])\d+(?:호|실)(?=$|[{seps}])", " ", out)  # '가상상사 - 504호' → '가상상사'
+    out = re.sub(r"\s{2,}", " ", out).strip(" -_:·.~|")
+    return out or s
+
+
+def breakfast_guest(name, cfg, bf_conv):
+    """조식명단 이름 칸: 사람 이름만 남기고(person_name_only) → 한국 이름이면 가운데 0 (mask_korean_name)"""
+    g = name or ""
+    if bf_conv.get("person_name_only", True):
+        g = person_name_only(g) or g
+    if cfg.get("mask_korean_names", True) and bf_conv.get("mask_names"):
+        g = mask_korean_name(g)
+    return g
+
 def _nights(arrival, departure):
     """숙박수(박) = 출발일 - 도착일. 날짜가 없거나 출발일이 도착일보다 빠르면 None"""
     try:
@@ -2010,10 +2109,10 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
             warnings.append("원본에 '비고'(조식 표시) 열이 없어 조식 대상을 가려내지 못했습니다. 전체를 확인해 주세요.")
         warnings.append("비고에 '조식 포함/조포'가 있는 객실만 뽑았습니다('룸온리'·'조식불포함'·'조식X' 등은 제외). 비고가 다른 표현이면 알려 주세요.")
 
-    if cfg.get("mask_korean_names", True) and conv.get("mask_names"):  # 조식명단에만 (사용자 지시 2026-10-26)
+    if kind == "breakfast":  # 조식명단에만: 사람 이름만 + 한국 이름 가운데 0 (사용자 지시 2026-10-26, 2026-11-08)
         for rec in records:
-            if rec.get("guest"):
-                rec["guest"] = rec["guest"] if rec.get("_extra") else mask_korean_name(rec["guest"])
+            if rec.get("guest") and not rec.get("_extra") and not rec.get("_group"):
+                rec["guest"] = breakfast_guest(rec["guest"], cfg, conv)
 
     if conv.get("sort_by_room"):  # 단체 줄은 항상 맨 아래
         records.sort(key=lambda rec: (rec.get("_group", False), _room_key(rec)))
@@ -2227,7 +2326,7 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
     for kind, rec in lines:
         r += 1
         guest = rec.get("guest") or ""
-        vals = [kind, rec.get("room") or "미배정", mask_korean_name(guest) if mask and not rec.get("_extra") else guest,
+        vals = [kind, rec.get("room") or "미배정", guest if rec.get("_extra") else breakfast_guest(guest, cfg, dict(bf_conv, mask_names=mask)),
                 rec.get("pax"), rec.get("_why", "") + (" · 인원 확인" if rec["_guess"] or rec.get("pax") is None else "")]
         for c, v in enumerate(vals, 1):
             cell = ws.cell(r, c, v)
@@ -2261,8 +2360,7 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
         recs = []
         for r0 in ih_bf + ar_bf:
             guest = r0.get("guest") or ""
-            if cfg.get("mask_korean_names", True) and bf_conv.get("mask_names"):
-                guest = mask_korean_name(guest)
+            guest = breakfast_guest(guest, cfg, bf_conv)
             recs.append({"room": r0.get("room") or "미배정", "guest": guest, "pax": r0.get("pax")})
         recs.sort(key=lambda r0: (not r0["room"].isdigit(), _room_key(r0)))
         recs += [{"room": e["room"], "guest": e["guest"], "pax": e["pax"]} for e in extras]  # 맨 아래 (합계 바로 위)
