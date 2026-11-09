@@ -648,7 +648,7 @@ def _scale_sheet(ws, last, right, f):
             cell.font = font
 
 
-def _fit_pages(ws, hrow, first, last, right, pages, fill=False, min_ratio=0.75, width_px=None):
+def _fit_pages(ws, hrow, first, last, right, pages, fill=False, min_ratio=0.75, width_px=None, body_font=None):
     """A4 'pages'장 안에 들어가도록: 너비는 1장, 세로는 최대 pages장.
     넘치면 글자 크기는 그대로 두고 행 높이(줄 간격)만 필요한 만큼 줄인다 (사용자 지시 2026-10-26).
     fill=True(조식명단, 2026-10-27): 1장 분량이면 1장, 넘치면 2장(최대 pages장)을 **꽉 채우도록** 행 높이를 늘리거나 줄인다.
@@ -665,6 +665,14 @@ def _fit_pages(ws, hrow, first, last, right, pages, fill=False, min_ratio=0.75, 
         # 배율 100%로 인쇄 → 세로도 이 크기 기준으로 채운다
         f = max(0.5, min(1.3, usable_w * 0.98 / widths(width_px or SAFE_PX)))
         _scale_sheet(ws, last, right, f)
+        if body_font:
+            # 조식명단 본문 글자 크기 고정 (사용자 지시 2026-11-10: 글씨가 너무 작다 → 14). 안내 문구 행(마지막)은 양식 비율 그대로
+            for r in range(first, last):
+                for c in range(1, right + 1):
+                    cell = ws.cell(r, c)
+                    font = copy(cell.font)
+                    font.sz = body_font
+                    cell.font = font
         total_w, scale = usable_w, 1.0
     else:
         total_w = widths(7)
@@ -711,13 +719,16 @@ def _row_floor(ws, r, right):
     """글자가 잘리지 않는 최소 행 높이"""
     size = max((ws.cell(r, c).font.sz or 11) for c in range(1, right + 1))
     lines = max(_wrapped_lines(ws, r, c, right) for c in range(1, right + 1))
-    return size * 1.3 * lines
+    return size * ROW_FLOOR * lines
 
 
 # 엑셀은 행 높이를 화면 점(픽셀) 단위로 반올림해 그린다 (96dpi: 0.75pt, 144dpi: 0.5pt …).
 # 23.01pt처럼 어중간한 높이는 칸마다 조금씩 커져 28칸이면 1쪽이 넘치고, 넘친 줄이 2쪽으로 밀려
 # 1쪽 아래가 비고 두 쪽 길이가 달라진다 (사용자 보고 2026-11-08) → 칸 높이를 1.5pt 단위로 맞추고 여유를 둔다
 ROW_STEP = 1.5
+# 글자가 잘리지 않는 최소 행 높이 = 글자 크기 × ROW_FLOOR × 줄 수. 14pt 글자도 인원이 많은 날(약 70객실) 두 장에 들어가게 1.15
+# (2026-11-10: 1.3이면 58객실부터 글자를 줄여야 했음)
+ROW_FLOOR = 1.15
 
 
 def _fill_two_equal_pages(ws, first, last, right, usable_h, repeat, pages=2, hrow=None):
@@ -827,7 +838,7 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                    number_format="0", notes=None, cash=None, row_height=None,
                    template=None, font_cfg=None, sum_label="계", sum_label_field=None, drop_trailer=(),
                    fit_pages=None, fill_pages=False, width_px=None, card_lookup=None, expenses=None,
-                   input_fill=True):
+                   input_fill=True, body_font=None):
     """template(호텔 양식 경로)가 있으면 양식을 열어 값만 채우고, 없으면 font_cfg로 새로 만든다.
     expenses(수입일보): 그날 지출 [{item, vendor, amount}] — 있으면 마지막 계 아래에 회색 빈 줄 + '지출' 줄 (없으면 아무것도 안 붙임)
     반환: 경고 목록"""
@@ -1063,7 +1074,8 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
         # 조식명단만 (사용자 지시 2026-10-27·11-08·11-10): 적으면 1장, 많으면 2장을 행 높이로 꽉 채우고 두 장의 맨 아래 선을 같게.
         # 다른 서류는 이 규칙을 쓰지 않고 샘플 양식의 행 높이 그대로 (2026-11-09)
         _fit_pages(ws, hrow, first, table_end, right, fit_pages or 2, fill=True,
-                   min_ratio=fill_pages if isinstance(fill_pages, float) else 0.75, width_px=width_px)
+                   min_ratio=fill_pages if isinstance(fill_pages, float) else 0.75, width_px=width_px,
+                   body_font=body_font)
     if ws.auto_filter.ref and records:
         ws.auto_filter.ref = f"A{hrow}:{get_column_letter(right)}{last}"
     if not input_fill:
@@ -2165,6 +2177,7 @@ def convert_file(kind, src_path, out_dir, business_date, cfg=None, unique=False,
                                drop_trailer=conv.get("drop_trailer", ()),
                                fit_pages=conv.get("fit_pages", cfg.get("fit_pages")),
                                fill_pages=conv.get("fill_pages", False), width_px=conv.get("width_px"),
+                               body_font=conv.get("body_font"),
                                card_lookup=card_lookup, input_fill=conv.get("input_fill", True),
                                expenses=[{**e, "date": e.get("date") or bdate.strftime("%Y-%m-%d")} for e in expenses]
                                if kind == "income" and expenses else None)
@@ -2395,7 +2408,8 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
                                    sum_label=bf_conv.get("sum_label", "계"), sum_label_field=bf_conv.get("sum_label_field"),
                                    drop_trailer=bf_conv.get("drop_trailer", ()),
                                    fit_pages=bf_conv.get("fit_pages", cfg.get("fit_pages")),
-                                   fill_pages=bf_conv.get("fill_pages", False), width_px=bf_conv.get("width_px"))
+                                   fill_pages=bf_conv.get("fill_pages", False), width_px=bf_conv.get("width_px"),
+                                   body_font=bf_conv.get("body_font"))
         warnings.append(f"호텔 양식 조식명단({len(recs) - len(extras)}객실 {total}명)도 만들었습니다: {os.path.basename(list_path)}"
                         + (" — 미배정 객실은 객실번호를 직접 적어 주세요" if any(r0['room'] == '미배정' for r0 in recs) else ""))
     return {"output": out_path, "list": list_path, "sanity_ok": sanity_ok,

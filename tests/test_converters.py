@@ -225,7 +225,8 @@ def test_repo_templates(cfg, tmp_path, monkeypatch, kind, data, title_size, body
     f = ws.column_dimensions["B"].width / tpl.column_dimensions["B"].width if kind == "breakfast" else 1
     near = lambda a, b: abs(a - b) <= 0.5
     assert ws["A1"].font.name == font and near(ws["A1"].font.sz, title_size * f)
-    assert ws["B3"].font.name == font and near(ws["B3"].font.sz, body_size * f) and ws["B3"].font.b
+    body = cfg["converters"]["breakfast"]["body_font"] if kind == "breakfast" else body_size * f  # 조식 본문 14 (2026-11-10)
+    assert ws["B3"].font.name == font and near(ws["B3"].font.sz, body) and ws["B3"].font.b
     for col in "ABCD":
         assert abs(ws.column_dimensions[col].width - tpl.column_dimensions[col].width * f) < 0.01
     if kind != "breakfast":
@@ -505,6 +506,8 @@ def test_breakfast_two_pages_same_size(cfg, tmp_path, monkeypatch, n_rooms):
     used = ws.row_dimensions[1].height + ws.row_dimensions[2].height + page1
     assert usable * 0.97 <= used <= usable, (used, usable)
     assert ws.cell(last, 1).value.startswith("조식 명단에")  # 안내 문구가 2쪽 맨 아래
+    # 본문 글자 14pt 고정 (사용자 지시 2026-11-10: 글씨가 너무 작다), 인원이 많아도(65객실) 줄이지 않음
+    assert all(ws.cell(r, 2).font.sz == 14 for r in range(3, last))
 
 
 @pytest.mark.parametrize("kind", ["income", "card", "credit"])

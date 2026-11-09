@@ -231,6 +231,8 @@
       "mask_names": true,
       "fill_pages": true,
       "width_px": 8,
+      "body_font": 14,
+      "_body_font": "조식명단 본문(객실·고객명·인원·합계) 글자 크기 고정 (사용자 지시 2026-11-10: 글씨가 너무 작다 → 14)",
       "group_rows": false,
       "group_min_rooms": 2,
       "group_room_label": "단체",
