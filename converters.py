@@ -633,136 +633,49 @@ def _col_points(width, px=7):
 SAFE_PX = 8
 
 
-def _scale_sheet(ws, last, right, f):
-    """열 너비·글자 크기·행 높이를 같은 비율 f로 줄이거나 키운다 (표 모양은 그대로, 크기만)"""
+def _fixed_page_layout(ws, hrow, right, h, n_rows, tail_heights, width_px=None):
+    """조식명단 A4 채우기 — **행 높이는 양식(샘플) 그대로 고정** (사용자 지시 2026-11-09: 모든 결과물의 행 높이는
+    호텔 샘플과 똑같이, 버전이 바뀌어도 바꾸지 말 것). 행 높이 대신 인쇄 배율·열 너비·빈 줄로 맞춘다:
+    - 한 쪽에 본문 k칸(제목·머리글은 쪽마다 반복), 배율은 k칸이 종이 아래 여백선까지 차도록
+    - 열 너비는 그 배율에서 A4 너비에 꽉 차도록 같은 비율로 (넉넉한 폭 계산 width_px, 호텔 PC는 열을 넓게 그림)
+    - 마지막 쪽은 빈 줄로 채워 모든 쪽의 표 길이가 같게 (2026-10-27·11-08: 두 장을 나란히 두므로 맨 아래 줄이 맞아야 함)
+    반환: (k, 빈 줄 수, 쪽 수, 열 너비 비율, 배율%)"""
+    m = ws.page_margins
+    usable_w = 595 - (m.left + m.right) * 72
+    usable_h = (842 - (m.top + m.bottom) * 72) * 0.985  # 프로그램마다 다른 픽셀 반올림 여유 1.5%
+    total_w = sum(_col_points(ws.column_dimensions[get_column_letter(c)].width, width_px or SAFE_PX)
+                  for c in range(1, right + 1))
+    repeat = sum(ws.row_dimensions[r].height or 15 for r in range(1, hrow + 1))
+    scale_w = min(1.0, usable_w * 0.98 / total_w) if total_w else 1.0
+    tail = sum(max(1, round(t / h)) for t in tail_heights)
+    cells = n_rows + tail
+    # k칸이 종이 높이에 꼭 맞는 배율이 너비 배율 이하가 되는 가장 작은 k부터 (열을 좁히면 안내 문구가 잘림 → 넓히기만)
+    k0 = max(1, -(-(usable_h / scale_w - repeat) // h))
+    best = None
+    for k in range(int(k0), int(k0) + 4):
+        pct = int(min(1.0, usable_h / (repeat + k * h)) * 100)
+        if best and pct < scale_w * 80:  # 너무 작아지면 그만 (호텔 양식 원래 배율 85% 근처까지)
+            break
+        pages = max(1, -(-cells // k))
+        if best is None or pages < best[2]:  # 쪽 수가 가장 적은 것 (같으면 글자가 큰 쪽)
+            best = (k, pages * k - cells, pages, pct)
+    k, pad, pages, pct = best
+    col_f = max(1.0, min(1.3, usable_w * 0.98 / (total_w * pct / 100))) if total_w else 1.0
+    return k, pad, pages, col_f, pct
+
+
+def _apply_fixed_pages(ws, hrow, right, k, pages, col_f, pct):
+    """_fixed_page_layout 결과대로: 열 너비 비율, 쪽마다 k칸에서 수동 쪽 나눔, 배율 고정 (행 높이는 건드리지 않음)"""
     for c in range(1, right + 1):
         d = ws.column_dimensions[get_column_letter(c)]
-        d.width = round((d.width or 8.43) * f, 2)
-    for r in range(1, last + 1):
-        if ws.row_dimensions[r].height:
-            ws.row_dimensions[r].height = round(ws.row_dimensions[r].height * f, 2)
-        for c in range(1, right + 1):
-            cell = ws.cell(r, c)
-            font = copy(cell.font)
-            font.sz = max(6, round((cell.font.sz or 11) * f * 2) / 2)  # 0.5pt 단위
-            cell.font = font
-
-
-def _fit_pages(ws, hrow, first, last, right, pages, fill=False, min_ratio=0.75, width_px=None):
-    """A4 'pages'장 안에 들어가도록: 너비는 1장, 세로는 최대 pages장.
-    넘치면 글자 크기는 그대로 두고 행 높이(줄 간격)만 필요한 만큼 줄인다 (사용자 지시 2026-10-26).
-    fill=True(조식명단, 2026-10-27): 1장 분량이면 1장, 넘치면 2장(최대 pages장)을 **꽉 채우도록** 행 높이를 늘리거나 줄인다.
-    그래도 넘치면 엑셀의 '1쪽 너비 × N쪽 높이 맞춤'이 마지막으로 축소한다."""
-    landscape = ws.page_setup.orientation == "landscape"
-    page_w, page_h = (842, 595) if landscape else (595, 842)
-    m = ws.page_margins
-    usable_w = page_w - (m.left + m.right) * 72
-    usable_h = page_h - (m.top + m.bottom) * 72
-    widths = lambda px: sum(_col_points(ws.column_dimensions[get_column_letter(c)].width, px)
-                            for c in range(1, right + 1))
-    if fill:
-        # 가로도 꽉 차게 (사용자 지시 2026-10-27): 넉넉한 폭 계산으로 A4 너비에 맞게 열 너비·글자 크기를 같이 조절,
-        # 배율 100%로 인쇄 → 세로도 이 크기 기준으로 채운다
-        f = max(0.5, min(1.3, usable_w * 0.98 / widths(width_px or SAFE_PX)))
-        _scale_sheet(ws, last, right, f)
-        total_w, scale = usable_w, 1.0
-    else:
-        total_w = widths(7)
-        scale = min(1.0, usable_w / total_w) if total_w else 1.0
-    height = lambda r: ws.row_dimensions[r].height or 15
-    repeat = sum(height(r) for r in range(1, hrow + 1))  # 쪽마다 반복되는 제목·머리글
-    per_page = usable_h / scale - repeat  # 한 쪽에서 표 본문이 쓸 수 있는 높이
-    body = sum(height(r) for r in range(first, last + 1))
-    n = pages
-    if fill:
-        # 양식 행 높이를 min_ratio(기본 75%, Sign 칸에 서명할 공간)까지 줄여서 들어가면 그 쪽 수로 — 최대 pages장
-        n = next((k for k in range(1, pages + 1) if body * min_ratio <= k * per_page), pages)
-        target = n * per_page * 0.97  # 행 단위로 쪽이 나뉘므로 약간 여유를 둔다
-    else:
-        target = pages * per_page
-    if fill and n <= 2 and _fill_two_equal_pages(ws, first, last, right, usable_h, repeat, n, hrow):
-        return
-    if body and (fill or body > target):
-        k = target / body
-        for r in range(first, last + 1):
-            size = max((ws.cell(r, c).font.sz or 11) for c in range(1, right + 1))
-            lines = max(str(ws.cell(r, c).value or "").count("\n") + 1 for c in range(1, right + 1))
-            floor = size * 1.3 * lines  # 글자가 잘리지 않는 최소 높이
-            ws.row_dimensions[r].height = round(min(409, max(floor, height(r) * k)), 2)  # 409 = 엑셀 행 높이 최대
-    ps = ws.page_setup
-    ps.fitToWidth, ps.fitToHeight = 1, n
-
-
-def _wrapped_lines(ws, r, c, right):
-    """칸 글자가 몇 줄로 그려지는지 어림 (병합 칸은 병합 너비, 한글은 숫자 약 1.8자 폭).
-    2026-11-03: 조식명단 행이 많아 칸 높이가 낮아지자 표 아래 안내 문구(한/영, 줄바꿈 포함)가 잘림 → 줄바꿈된 줄 수까지 셈"""
-    text = str(ws.cell(r, c).value or "")
-    if text.startswith("="):  # 수식(합계 =SUM…)은 결과 숫자만 보인다
-        return 1
-    size = ws.cell(r, c).font.sz or 11
-    c1 = next((m.max_col for m in ws.merged_cells.ranges if m.min_row == r and m.min_col == c), c)
-    width = sum(ws.column_dimensions[get_column_letter(k)].width or 8.43 for k in range(c, min(c1, right) + 1))
-    cap = max(1.0, width * 11 / size * 0.95)
-    units = lambda t: sum(1.8 if ord(ch) > 0x2E80 else 1.0 for ch in t)
-    return sum(max(1, -(-units(line) // cap)) for line in text.split("\n"))
-
-
-def _row_floor(ws, r, right):
-    """글자가 잘리지 않는 최소 행 높이"""
-    size = max((ws.cell(r, c).font.sz or 11) for c in range(1, right + 1))
-    lines = max(_wrapped_lines(ws, r, c, right) for c in range(1, right + 1))
-    return size * 1.3 * lines
-
-
-# 엑셀은 행 높이를 화면 점(픽셀) 단위로 반올림해 그린다 (96dpi: 0.75pt, 144dpi: 0.5pt …).
-# 23.01pt처럼 어중간한 높이는 칸마다 조금씩 커져 28칸이면 1쪽이 넘치고, 넘친 줄이 2쪽으로 밀려
-# 1쪽 아래가 비고 두 쪽 길이가 달라진다 (사용자 보고 2026-11-08) → 칸 높이를 1.5pt 단위로 맞추고 여유를 둔다
-ROW_STEP = 1.5
-
-
-def _fill_two_equal_pages(ws, first, last, right, usable_h, repeat, pages=2, hrow=None):
-    """조식명단 A4 꽉 채우기 (사용자 지시 2026-10-27, 2026-11-08 보정):
-    1장이면 그 쪽을, 2장이면 두 쪽을 **같은 길이로 종이 끝까지** 채운다 (두 장을 나란히 놓으므로 맨 아래 줄이 딱 맞아야 함).
-    - 모든 본문 행을 같은 높이(한 칸, ROW_STEP 단위)로, 2장이면 1쪽 k칸 / 2쪽 k칸 + 수동 쪽 나눔
-    - 마지막 행(안내 문구)은 남는 칸 수만큼 높이를 차지해 두 쪽의 맨 아래 선이 같아진다
-    - 칸 높이를 단위로 내리며 생긴 자투리는 쪽마다 반복되는 제목·머리글 행에 나눠 붙여 표 끝이 종이 끝까지 닿게 한다
-    '맞춤' 인쇄는 수동 쪽 나눔을 무시하므로 배율 100%로 인쇄한다(너비는 _scale_sheet가 이미 맞춤). 안 되면 False."""
-    space = (usable_h - repeat) * 0.985  # 쪽마다 표 본문이 쓸 수 있는 높이 (프로그램마다 다른 반올림 여유 1.5%)
-    others = last - first  # 마지막 행(안내 문구 또는 합계) 앞까지의 행 수
-    if others < 1:
-        return False
-    floor_other = max(_row_floor(ws, r, right) for r in range(first, last))
-    floor_last = _row_floor(ws, last, right)
-    snap = lambda v: int(v / ROW_STEP) * ROW_STEP
-    k = max(1, -(-(others + 1) // pages))
-    for _ in range(10):  # 칸 높이 ↔ 마지막 행이 차지할 칸 수가 서로 맞을 때까지
-        h = snap(space / k)
-        m = max(1, -(-floor_last // h)) if h else 1
-        k_new = max(1, -(-(others + int(m)) // pages))
-        if k_new == k:
-            break
-        k = k_new
-    h = snap(min(409, space / k))
-    if h < floor_other or (pages == 2 and k > others):  # 안 들어가거나 1쪽을 채울 행이 모자라면 포기
-        return False
-    for r in range(first, last):
-        ws.row_dimensions[r].height = h
-    ws.row_dimensions[last].height = min(409, h * (pages * k - others))
-    # 자투리 → 제목·머리글 행(쪽마다 반복)에 나눠 붙임
-    rest = snap(space - k * h)
-    heads = list(range(1, (hrow or first - 1) + 1))
-    if rest > 0 and heads:
-        add = snap(rest / len(heads))
-        for r in heads:
-            ws.row_dimensions[r].height = round((ws.row_dimensions[r].height or 15) + add, 2)
+        d.width = round((d.width or 8.43) * col_f, 2)
     ws.row_breaks.brk = []
-    if pages == 2:
-        ws.row_breaks.append(Break(id=first + k - 1))  # 1쪽 = 머리글 + k칸
+    for j in range(1, pages):
+        ws.row_breaks.append(Break(id=hrow + j * k))
     ps = ws.page_setup
-    ps.scale = 100
+    ps.scale = pct
     ws.sheet_properties.pageSetUpPr.fitToPage = False
     ps.fitToWidth, ps.fitToHeight = 1, pages
-    return True
 
 
 _LOOKUP_SHEET = "카드목록"
@@ -830,6 +743,20 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
         idx.setdefault(c["header"], i)
     printable = sorted(colmap[i] for i, c in enumerate(out_cols) if c.get("print", True))
     letter = lambda i: get_column_letter(colmap[i])
+
+    layout = None
+    if fill_pages and records and s.data_height:
+        # 조식명단: 행 높이는 양식 그대로, 쪽마다 같은 칸 수 → 마지막 쪽을 빈 줄로 채움 (단체 추가 줄·합계 바로 위)
+        drop0 = {norm(x) for x in drop_trailer}
+        tail = ([s.foot_height or s.data_height] if sum_fields and cash is None else []) + \
+               [t[1] or s.data_height for t in s.trailer if not (t[0] and norm(t[0][0][1]) in drop0)]
+        right0 = max(printable[-1], s.frame_last)
+        _fit_a4(ws, hrow)  # 조식명단 여백(0.4·0.5)으로 계산
+        layout = _fixed_page_layout(ws, hrow, right0, s.data_height, len(records), tail, width_px)
+        if layout[1]:
+            n_extra = sum(1 for rec in records if rec.get("_extra"))
+            body = records[:len(records) - n_extra]
+            records = body + [{"_no_fill": True, "_blank": True} for _ in range(layout[1])] + records[len(body):]
 
     r = hrow
     sections = []  # 수입일보: 매출구분 묶음마다 계 줄 [(첫 행, 끝 행, 계 행)]
@@ -1041,9 +968,10 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
                 ws.cell(fr + 1, c).border = Border(left=nb.left, right=nb.right, top=thick, bottom=nb.bottom)
     ws.print_area = f"A1:{get_column_letter(right)}{r}"
     _fit_a4(ws, hrow, keep_margins=bool(template) and not fill_pages)
-    if fit_pages:
-        _fit_pages(ws, hrow, first, table_end, right, fit_pages, fill=bool(fill_pages),
-                   min_ratio=fill_pages if isinstance(fill_pages, float) else 0.75, width_px=width_px)
+    # 행 높이는 어떤 경우에도 양식(샘플) 그대로 (사용자 지시 2026-11-09). 길면 쪽 수가 늘어날 뿐 줄이지 않는다
+    # (예전 fit_pages: 2장에 맞추려고 행 높이를 줄이던 기능은 폐기, 너비만 1장에 맞춤)
+    if layout:
+        _apply_fixed_pages(ws, hrow, right, layout[0], layout[2], layout[3], layout[4])
     if ws.auto_filter.ref and records:
         ws.auto_filter.ref = f"A{hrow}:{get_column_letter(right)}{last}"
     if not input_fill:
@@ -1293,7 +1221,7 @@ def _check_group_totals(records, warnings):
 
 _HANGUL_NAME = re.compile(r"[가-힣]{2,4}")
 _ERP_MASKED = re.compile(r"[가-힣][*＊]+[가-힣]?|[가-힣]{2}[*＊]+[가-힣]?")
-# 4글자 한국 이름은 드묾 → 두 글자 성(남궁·황보 …)으로 시작할 때만 이름으로 본다 (2026-10-27: '씨티소재'가 '씨00재'로 가려짐)
+# 4글자 한국 이름은 드묾 → 두 글자 성(남궁·황보 …)으로 시작할 때만 이름으로 본다 (2026-10-27: '가상소재'가 '가00재'로 가려짐)
 _TWO_CHAR_SURNAMES = ("남궁", "황보", "제갈", "선우", "독고", "사공", "서문", "동방", "어금", "망절", "강전", "소봉")
 # 2·3글자라도 회사·단체를 뜻하는 말이 들어 있으면 이름이 아님
 _COMPANY_WORDS = re.compile(r"소재|그룹|상사|산업|건설|전자|물산|화학|제약|은행|증권|보험|여행|투어|항공|호텔|학교|대학|"
@@ -1333,7 +1261,7 @@ def korean_person_part(name):
 def mask_korean_name(name, mark="0"):
     """개인정보 보호 (사용자 지시 2026-10-26): 한국인 이름만 가운데 글자를 0으로.
     3자 홍길동→홍0동, 외자 2자 김철→김0, 4자는 두 글자 성만 남궁민수→남00수.
-    회사·단체 이름(씨티소재, 삼성전자), 외국인 이름·영문 섞인 이름(진양그룹-Noah)·5자 이상은 그대로 (2026-10-27).
+    회사·단체 이름(가상소재, 삼성전자), 외국인 이름·영문 섞인 이름(진양그룹-Noah)·5자 이상은 그대로 (2026-10-27).
     ERP가 이미 *로 가린 이름(정*영)은 *를 0으로 바꿔 표기를 통일."""
     s = (name or "").strip()
     if re.search(r"[/,，]", s):  # '홍길동/김철'처럼 여러 사람 → 각각 가린다 (2026-10-29)

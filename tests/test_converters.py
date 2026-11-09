@@ -157,7 +157,7 @@ def test_breakfast(cfg, tmp_path):
     assert [r[2] for r in rows] == [2, 2, 1, 1, 1, 1, 2]
     assert not any(r[0] == "단체" for r in v)
     assert not any(r[0] == "1287" for r in v)
-    assert ws["B3"].font.name == "맑은 고딕" and ws["B3"].font.sz < 18  # A4 너비에 맞게 줄임
+    assert ws["B3"].font.name == "맑은 고딕" and ws["B3"].font.sz == 18  # 글자 크기도 양식 그대로 (2026-11-09)
 
 
 def test_wrong_file_message(cfg, tmp_path):
@@ -220,17 +220,13 @@ def test_repo_templates(cfg, tmp_path, monkeypatch, kind, data, title_size, body
     res = cv.convert_file(kind, src, str(tmp_path / "out"), BDATE, cfg)
     assert not any("양식 파일" in w for w in res["warnings"])
     ws, v = _values(res["output"])
-    # 조식명단은 A4 너비에 맞게 열 너비·글자 크기를 같은 비율로 조절 (2026-10-27), 나머지는 양식 그대로
+    # 조식명단만 A4 너비에 맞게 열 너비를 같은 비율로 조절 (인쇄 배율과 함께). 글자 크기·행 높이는 모두 양식 그대로 (2026-11-09)
     f = ws.column_dimensions["B"].width / tpl.column_dimensions["B"].width if kind == "breakfast" else 1
-    near = lambda a, b: abs(a - b) <= 0.5
-    assert ws["A1"].font.name == font and near(ws["A1"].font.sz, title_size * f)
-    assert ws["B3"].font.name == font and near(ws["B3"].font.sz, body_size * f) and ws["B3"].font.b
+    assert ws["A1"].font.name == font and ws["A1"].font.sz == title_size
+    assert ws["B3"].font.name == font and ws["B3"].font.sz == body_size and ws["B3"].font.b
     for col in "ABCD":
         assert abs(ws.column_dimensions[col].width - tpl.column_dimensions[col].width * f) < 0.01
-    if kind == "breakfast":  # 조식명단은 A4를 꽉 채우도록 행 높이를 늘린다 (2026-10-27)
-        assert ws.row_dimensions[3].height >= tpl.row_dimensions[3].height * f
-    else:
-        assert ws.row_dimensions[3].height == tpl.row_dimensions[3].height
+    assert ws.row_dimensions[3].height == tpl.row_dimensions[3].height
     import datetime as dt
     expect = dt.date.today().strftime("%m/%d") if kind == "breakfast" else "10/22"  # 조식은 서류 만드는 날
     assert expect in v[0][0]
@@ -266,7 +262,9 @@ def test_repo_templates(cfg, tmp_path, monkeypatch, kind, data, title_size, body
         assert "외부식사" not in firsts and any(str(x).startswith("조식 명단에") for x in firsts)
         total = next(r for r in v if r[0] == "합계")  # 외부식사 대신 합계 행 + 인원 합 수식
         n = len([r for r in v[2:] if r[0] and (str(r[0]).isdigit() or r[0] == "단체")])
-        assert total[2] == f"=SUM(C3:C{2 + n})"
+        total_row = 1 + next(i for i, r in enumerate(v) if r[0] == "합계")
+        assert total[2] == f"=SUM(C3:C{total_row - 1})"  # 마지막 쪽을 채운 빈 줄까지 (빈 줄은 0)
+        assert all(not any(r[:3]) for r in v[2 + n:total_row - 1])
         assert ws["E3"].border.right.style == "medium"  # 병합된 Sign 칸의 오른쪽 열도 테두리 유지
         assert ws.auto_filter.ref.startswith("A2:E")
 
@@ -318,8 +316,8 @@ def test_chosen_save_folder_wins(cfg, tmp_path, monkeypatch):
     ("홍길동", "홍0동"), ("김철", "김0"), ("남궁민수", "남00수"), ("정*영", "정0영"),
     ("진양그룹-Noah Raymond", "진양그룹-Noah Raymond"), ("CHRISTOPH", "CHRISTOPH"),
     ("Zhu bao jun / Lin jia hao", "Zhu bao jun / Lin jia hao"), ("코원필오케스트라", "코원필오케스트라"), ("", ""),
-    # 4글자는 두 글자 성일 때만 사람 이름 — 회사 이름은 그대로 (2026-10-27 '씨티소재' → '씨00재' 문제)
-    ("씨티소재", "씨티소재"), ("한빛여행", "한빛여행"), ("삼성전자", "삼성전자"), ("황보영희", "황00희"),
+    # 4글자는 두 글자 성일 때만 사람 이름 — 회사 이름은 그대로 (2026-10-27 '가상소재' → '가00재' 문제)
+    ("가상소재", "가상소재"), ("한빛여행", "한빛여행"), ("삼성전자", "삼성전자"), ("황보영희", "황00희"),
     ("제갈공명", "제00명"), ("김영희철", "김영희철"), ("대한항공", "대한항공"), ("하나투어", "하나투어"),
 ])
 def test_mask_korean_name(raw, masked):
@@ -337,8 +335,7 @@ def test_names_masked_in_documents(cfg, tmp_path):
 
 
 def test_many_rows_fit_two_a4_pages(cfg, tmp_path, monkeypatch):
-    """수입일보는 객실이 많아도 줄 높이를 11/01 표준(33.95)으로 고정 (2026-11-02: 줄 간격이 같아야 인쇄하기 편함).
-    다른 서류(대외후불 등)는 예전처럼 A4 2장에 들어가게 행 높이를 줄인다."""
+    """객실이 많아도 행 높이는 샘플 그대로 고정 (수입일보 2026-11-02, 모든 서류 2026-11-09)."""
     monkeypatch.setattr(cv, "app_dir", lambda: ROOT)  # 실제 호텔 양식 사용
     rows = [INCOME[0]] + [["ROOM", f"손님{i}", BDATE, "2026-10-23", "D/T", "회사", f"{300 + (i % 13) + 1 + (i // 13) * 100:04d}",
                            "", 0, 0, "", "", 1, 0, 0, 0, 0, 99000, 0] for i in range(65)]
@@ -349,7 +346,8 @@ def test_many_rows_fit_two_a4_pages(cfg, tmp_path, monkeypatch):
     many = [head] + [["가상호텔", "ROOM", 1, f"{300 + (i % 13) + 1 + (i // 13) * 100:04d}", "대외후불", BDATE, f"손님{i}",
                       BDATE, "2026-10-23", "가상여행", 10000, ""] for i in range(65)]
     ws2, _ = _values(cv.convert_file("credit", _xlsx(tmp_path / "후불.xlsx", many), str(tmp_path / "out"), BDATE, cfg)["output"])
-    assert ws2.page_setup.fitToHeight == 2 and ws2.row_dimensions[3].height < 39.95
+    # 대외후불도 줄이지 않음 (사용자 지시 2026-11-09: 모든 결과물의 행 높이는 샘플 그대로) → 쪽 수만 늘어남
+    assert ws2.page_setup.fitToHeight == 0 and all(ws2.row_dimensions[r].height == 39.95 for r in range(2, 69))
 
 
 @pytest.mark.parametrize("remark,ok,pax", [
@@ -446,65 +444,69 @@ def test_breakfast_person_name_only(cfg, raw, want):
     assert cv.breakfast_guest(raw, cfg, cfg["converters"]["breakfast"]) == want
 
 
-def _bf_fill_ratio(ws):
-    """조식명단 본문이 N쪽 공간을 얼마나 채우는지 (1.0 = 꽉 참)"""
-    m = ws.page_margins
-    total_w = sum(cv._col_points(ws.column_dimensions[c].width) for c in "ABCDE")
-    scale = min(1, (595 - (m.left + m.right) * 72) / total_w)
-    repeat = sum(ws.row_dimensions[r].height for r in (1, 2))
-    per_page = (842 - (m.top + m.bottom) * 72) / scale - repeat
-    body = sum(ws.row_dimensions[r].height or 15 for r in range(3, ws.max_row + 1))
-    return body / (ws.page_setup.fitToHeight * per_page)
-
-
-@pytest.mark.parametrize("n_rooms,pages", [(3, 1), (12, 1), (25, 2), (45, 2), (80, 2)])
-def test_breakfast_fills_a4(cfg, tmp_path, monkeypatch, n_rooms, pages):
-    """조식명단만: 1장 분량이면 1장, 넘치면 2장을 꽉 채운다 (최대 2장, 2026-10-27)."""
+@pytest.mark.parametrize("n_rooms", [3, 12, 20, 30, 43, 55, 80])
+def test_breakfast_fixed_heights_equal_pages(cfg, tmp_path, monkeypatch, n_rooms):
+    """조식명단 (사용자 지시 2026-11-09): 행 높이·글자 크기는 샘플 양식 그대로 고정.
+    대신 쪽마다 같은 칸 수(수동 쪽 나눔) + 마지막 쪽은 빈 줄로 채워 모든 쪽의 표 길이가 같고, 배율로 종이 아래까지 채운다.
+    가로는 넉넉한 폭 계산(width_px)으로도 A4 너비 안 (2026-10-27 Sign 열 잘림)."""
     monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
-    rooms = [f"0{f}{n:02d}" for f in range(3, 8) for n in range(1, 14)]
-    rows = [BREAKFAST[0]] + [[i, "가", "", "1인 조포", f"손님{i}", rooms[i % 65], 1, 0] for i in range(n_rooms)]
-    res = cv.convert_file("breakfast", _xlsx(tmp_path / "bf.xlsx", rows), str(tmp_path / "out"), BDATE, cfg)
-    ws = load_workbook(res["output"]).active
-    assert ws.page_setup.fitToHeight == pages
-    ratio = _bf_fill_ratio(ws)
-    if n_rooms <= 45:
-        assert 0.9 <= ratio <= 1.0, ratio  # 꽉 참 (넘치지 않음)
-    # 가로도 A4 너비에 맞춤: 넉넉한 width_px 계산으로도 너비 안 (2026-10-27 Sign 열 잘림 수정)
-    usable_w = 595 - (ws.page_margins.left + ws.page_margins.right) * 72
-    total_w = sum(cv._col_points(ws.column_dimensions[c].width, cfg["converters"]["breakfast"]["width_px"]) for c in "ABCDE")
-    assert 0.95 * usable_w <= total_w <= usable_w, (total_w, usable_w)
-    assert ws["B3"].font.sz < 18 and ws["B2"].font.sz < 18  # 열과 같은 비율로 글자도 줄임
-    assert ws.page_setup.scale in (None, 100)
-
-
-def test_other_documents_not_stretched(cfg, tmp_path, monkeypatch):
-    """조식명단 외 서류는 늘리지 않는다 (짧으면 양식 높이 그대로)."""
-    monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
-    res = cv.convert_file("credit", _xlsx(tmp_path / "c.xlsx", CREDIT), str(tmp_path / "out"), BDATE, cfg)
-    ws = load_workbook(res["output"]).active
-    assert ws.row_dimensions[3].height == 39.95
-
-
-@pytest.mark.parametrize("n_rooms", [20, 30, 43, 55])
-def test_breakfast_two_pages_same_size(cfg, tmp_path, monkeypatch, n_rooms):
-    """조식명단 2장: 두 장을 나란히 놓으므로 표 크기가 똑같고 맨 아래 줄이 딱 맞아야 한다 (2026-10-27)."""
-    monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
-    rooms = [f"0{f}{n:02d}" for f in range(3, 8) for n in range(1, 14)]
+    tpl = load_workbook(os.path.join(ROOT, cfg["converters"]["breakfast"]["template"])).active
+    rooms = [f"0{f}{n:02d}" for f in range(3, 8) for n in range(1, 14)] * 2
     rows = [BREAKFAST[0]] + [[i, "가", "", "1인 조포", "손님", rooms[i], 1, 0] for i in range(n_rooms)]
     res = cv.convert_file("breakfast", _xlsx(tmp_path / "bf.xlsx", rows), str(tmp_path / "out"), BDATE, cfg)
     ws = load_workbook(res["output"]).active
+    last = ws.max_row
+    # 행 높이: 제목·머리글·본문은 샘플과 똑같이
+    assert [ws.row_dimensions[r].height for r in (1, 2)] == [tpl.row_dimensions[1].height, tpl.row_dimensions[2].height]
+    assert all(ws.row_dimensions[r].height == tpl.row_dimensions[3].height for r in range(3, last))
+    assert ws.row_dimensions[last].height == tpl.row_dimensions[tpl.max_row].height  # 안내 문구 행도 양식 그대로
+    assert ws["B3"].font.sz == tpl["B3"].font.sz
+    # 쪽마다 같은 칸 수
     breaks = [b.id for b in ws.row_breaks.brk]
-    assert len(breaks) == 1 and ws.sheet_properties.pageSetUpPr.fitToPage is False and ws.page_setup.scale
-    cut, last = breaks[0], ws.max_row
-    page1 = sum(ws.row_dimensions[r].height for r in range(3, cut + 1))
-    page2 = sum(ws.row_dimensions[r].height for r in range(cut + 1, last + 1))
-    assert abs(page1 - page2) < 0.5, (page1, page2)
-    # 엑셀이 픽셀 단위로 반올림해도 넘치지 않게 칸 높이는 1.5pt 단위, 제목·머리글 + 본문 = 쪽 높이의 98.5% 이상 (2026-11-08)
-    assert all(ws.row_dimensions[r].height % cv.ROW_STEP == 0 for r in range(3, last))
-    usable = 842 - (ws.page_margins.top + ws.page_margins.bottom) * 72
-    used = ws.row_dimensions[1].height + ws.row_dimensions[2].height + page1
-    assert usable * 0.97 <= used <= usable, (used, usable)
-    assert ws.cell(last, 1).value.startswith("조식 명단에")  # 안내 문구가 2쪽 맨 아래
+    k = breaks[0] - 2 if breaks else last - 2
+    assert all(b == 2 + k * (j + 1) for j, b in enumerate(breaks))
+    assert last - 2 == k * (len(breaks) + 1)  # 마지막 쪽도 k칸 (빈 줄로 채움)
+    # 종이 아래까지: 제목·머리글 + k칸이 쪽 높이의 93% 이상
+    pct = ws.page_setup.scale / 100
+    assert ws.sheet_properties.pageSetUpPr.fitToPage is False
+    usable_h = 842 - (ws.page_margins.top + ws.page_margins.bottom) * 72
+    used = (sum(ws.row_dimensions[r].height for r in (1, 2)) + k * tpl.row_dimensions[3].height) * pct
+    assert 0.93 * usable_h <= used <= usable_h, (used, usable_h)
+    usable_w = 595 - (ws.page_margins.left + ws.page_margins.right) * 72
+    total_w = sum(cv._col_points(ws.column_dimensions[c].width, cfg["converters"]["breakfast"]["width_px"]) for c in "ABCDE")
+    assert 0.9 * usable_w <= total_w * pct <= usable_w, (total_w * pct, usable_w)
+    assert ws.cell(last, 1).value.startswith("조식 명단에")  # 안내 문구가 마지막 쪽 맨 아래
+
+
+@pytest.mark.parametrize("kind", ["income", "card", "credit", "breakfast"])
+def test_all_row_heights_locked_to_samples(cfg, tmp_path, monkeypatch, kind):
+    """⚠ 사용자 지시 2026-11-09: 모든 결과물의 행 높이는 저장소의 샘플 양식(templates/)과 똑같이, 버전이 바뀌어도 고정.
+    줄이 아주 많아도(90줄) 표 안의 모든 행 높이가 양식의 제목·머리글·본문·합계·안내 행 높이 중 하나여야 한다."""
+    monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
+    tpl = load_workbook(os.path.join(ROOT, cfg["converters"][kind]["template"])).active
+    allowed = {tpl.row_dimensions[r].height for r in range(1, tpl.max_row + 1)}
+    rooms = [f"{300 + (i % 13) + 1 + (i // 13) * 100:04d}" for i in range(90)]
+    if kind == "income":
+        rows = [INCOME[0]] + [["ROOM", f"손님{i}", BDATE, "2026-10-23", "D/T", "회사", rooms[i], "", 0, 0, "", "", 1,
+                               0, 0, 0, 0, 99000, 0] for i in range(90)]
+    elif kind == "credit":
+        rows = [CREDIT[0]] + [["가상호텔", "ROOM", 1, rooms[i], "대외후불", BDATE, f"손님{i}", BDATE, "2026-10-23",
+                               "가상여행", 10000, ""] for i in range(90)]
+    elif kind == "card":
+        rows = [CARD[0]] + [[BDATE, i, 0, f"A{i}", "카드승인", "1111-xxxx-xxxx-xxxx", 0, 0, 1000, 1000, "0", "성공",
+                             "", "가상카드", "1", "", str(i), ""] for i in range(90)]
+    else:
+        rows = [BREAKFAST[0]] + [[i, "가", "", "1인 조포", "손님", rooms[i % 65], 1, 0] for i in range(90)]
+    res = cv.convert_file(kind, _xlsx(tmp_path / f"{kind}.xlsx", rows), str(tmp_path / "out"), BDATE, cfg)
+    ws = load_workbook(res["output"]).active
+    data_h = tpl.row_dimensions[3].height
+    heights = [ws.row_dimensions[r].height for r in range(1, ws.max_row + 1) if ws.cell(r, 1).value is not None
+               or r <= 2 or ws.row_dimensions[r].height]
+    assert set(heights) <= allowed, (set(heights) - allowed)
+    assert ws.row_dimensions[1].height == tpl.row_dimensions[1].height
+    assert ws.row_dimensions[2].height == tpl.row_dimensions[2].height
+    assert sum(1 for h in heights if h == data_h) >= 60
+    assert ws["B3"].font.sz == tpl["B3"].font.sz and ws["A1"].font.sz == tpl["A1"].font.sz
 
 
 # ---------------------------------------------------------------- 조식 인원수 (내일 아침, 2026-10-27)

@@ -4,7 +4,8 @@
   "valid_rooms": [301, 713],
   "_output_dir": "변환 결과(호텔 양식) 저장 폴더 = 프론트 공유폴더 마감파일 (사용자 지시 2026-11-03). 빈칸이면 프로그램 폴더\\마감결과. 화면의 [저장 위치 변경]으로 고른 폴더가 우선",
   "output_dir": "\\\\Desktop-d86h8fs\\공유폴더\\마감파일",
-  "fit_pages": 2,
+  "fit_pages": null,
+  "_fit_pages": "폐기 (사용자 지시 2026-11-09): 모든 결과물의 행 높이는 샘플 양식 그대로 고정 — 2장에 맞추려고 줄이지 않음",
   "mask_korean_names": true,
   "mask_card_number": true,
   "daily": {
