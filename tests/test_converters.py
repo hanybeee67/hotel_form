@@ -484,7 +484,7 @@ def test_other_documents_not_stretched(cfg, tmp_path, monkeypatch):
     assert ws.row_dimensions[3].height == 39.95
 
 
-@pytest.mark.parametrize("n_rooms", [20, 30, 43, 55])
+@pytest.mark.parametrize("n_rooms", [20, 30, 43, 55, 58, 65])  # 58 이상: 2026-11-10 실제 58객실에서 2쪽이 짧던 문제
 def test_breakfast_two_pages_same_size(cfg, tmp_path, monkeypatch, n_rooms):
     """조식명단 2장: 두 장을 나란히 놓으므로 표 크기가 똑같고 맨 아래 줄이 딱 맞아야 한다 (2026-10-27, 2026-11-10 다시 확인).
     조식명단에만 적용 — 행 높이로 맞춘다 (다른 서류는 샘플 행 높이 고정)."""

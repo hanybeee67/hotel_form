@@ -743,8 +743,25 @@ def _fill_two_equal_pages(ws, first, last, right, usable_h, repeat, pages=2, hro
             break
         k = k_new
     h = snap(min(409, space / k))
-    if h < floor_other or (pages == 2 and k > others):  # 안 들어가거나 1쪽을 채울 행이 모자라면 포기
+    if pages == 2 and k > others:  # 1쪽을 채울 행이 모자라면 포기
         return False
+    if h < floor_other:
+        # 인원이 많아(2026-11-10 실제 58객실) 칸 높이가 글자보다 낮아짐 → 예전엔 포기하고 '맞춤' 인쇄로 넘어가
+        # 1쪽만 꽉 차고 2쪽은 짧게 나옴 (사용자 사진). 이제는 본문 글자를 칸 높이에 맞게 줄여서 항상 두 장 같은 길이로
+        f = h / floor_other
+        for r in range(first, last + 1):
+            for c in range(1, right + 1):
+                cell = ws.cell(r, c)
+                font = copy(cell.font)
+                font.sz = max(7, int((cell.font.sz or 11) * f * 2) / 2)  # 0.5pt 단위로 내림
+                cell.font = font
+        floor_other = max(_row_floor(ws, r, right) for r in range(first, last))
+        floor_last = _row_floor(ws, last, right)
+        m = max(1, -(-floor_last // h))
+        k = max(k, -(-(others + int(m)) // pages))
+        h = snap(min(409, space / k))
+        if h < floor_other * 0.98:
+            return False
     for r in range(first, last):
         ws.row_dimensions[r].height = h
     ws.row_dimensions[last].height = min(409, h * (pages * k - others))
