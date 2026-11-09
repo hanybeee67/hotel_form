@@ -341,7 +341,7 @@ def test_many_rows_fit_two_a4_pages(cfg, tmp_path, monkeypatch):
     rows = [INCOME[0]] + [["ROOM", f"손님{i}", BDATE, "2026-10-23", "D/T", "회사", f"{300 + (i % 13) + 1 + (i // 13) * 100:04d}",
                            "", 0, 0, "", "", 1, 0, 0, 0, 0, 99000, 0] for i in range(65)]
     ws, _ = _values(cv.convert_file("income", _xlsx(tmp_path / "수입.xlsx", rows), str(tmp_path / "out"), BDATE, cfg)["output"])
-    assert ws.row_dimensions[1].height == 50.1 and all(ws.row_dimensions[r].height == 34 for r in range(2, 68))
+    assert ws.row_dimensions[1].height == 57 and all(ws.row_dimensions[r].height == 39 for r in range(2, 68))
     assert ws["B3"].font.sz == 18 and ws.page_setup.fitToWidth == 1 and ws.page_setup.fitToHeight == 0
     head = CREDIT[0]
     many = [head] + [["가상호텔", "ROOM", 1, f"{300 + (i % 13) + 1 + (i // 13) * 100:04d}", "대외후불", BDATE, f"손님{i}",
@@ -867,7 +867,7 @@ def test_income_same_room_lines_kept_separate(cfg, tmp_path):
 
 def test_income_prepost_prefill(cfg, tmp_path):
     """선/후 미리 채우기 (2026-11-02): 오늘 결제 줄(카드→카.선, CASH→현.선, 대외후불→온라인결제), 계속 묵는 손님은 어제 값.
-    서식은 11/01 수작업 일보 표준(제목 50.1 · 줄 34, 2026-11-10)."""
+    서식은 11/01 수작업 일보 표준(제목 57 · 줄 39, 2026-11-10)."""
     def row(kind, room, sales, pay=0, arr="2026-10-22"):
         return [kind, "손님", arr, "2026-10-25", "D/T", "회사", room, "", 0, 0, "", "", 1, 0, 0, 0, 0, sales, pay]
     rows = [INCOME[0], row("ROOM", "0301", 100000), row("ROOM", "0302", 90000), row("ROOM", "0303", 90000),
@@ -918,7 +918,7 @@ def test_sample_1101_sizes(cfg, tmp_path, monkeypatch):
     monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
     inc = load_workbook(cv.convert_file("income", _xlsx(tmp_path / "i.xlsx", INCOME), str(tmp_path / "o"), BDATE, cfg)["output"]).active
     assert [inc.column_dimensions[c].width for c in "ABCDEFGHI"] == [13.83, 47.66, 31.83, 24.83, 24.83, 20.5, 13.83, 24.83, 24.83]
-    assert inc.row_dimensions[1].height == 50.1 and inc.row_dimensions[3].height == 34
+    assert inc.row_dimensions[1].height == 57 and inc.row_dimensions[3].height == 39
     assert (round(inc.page_margins.left, 3), round(inc.page_margins.top, 3)) == (0.748, 0.394)
     card = load_workbook(cv.convert_file("card", _xlsx(tmp_path / "c.xlsx", CARD), str(tmp_path / "o"), BDATE, cfg)["output"]).active
     assert [card.cell(2, c).value for c in range(1, 8)] == ["객실", "카드번호", "사업자번호", "매입사", "가맹점번호", "승인번호", "승인금액"]

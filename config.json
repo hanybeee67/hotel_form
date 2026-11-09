@@ -62,7 +62,7 @@
       "input_fill": false,
       "template": "templates/수입일보.xlsx",
       "font": {"name": "굴림", "orientation": "landscape", "title": 26, "title_bold": true, "header": 18, "header_bold": true, "body": 18, "body_bold": true,
-               "title_height": 50.1, "header_height": 34, "row_height": 34, "header_fill": null, "sum_fill": null},
+               "title_height": 57, "header_height": 39, "row_height": 39, "header_fill": null, "sum_fill": null},
       "source_fields": {
         "room":      ["객실#", "객실", "객실번호", "룸", "룸번호", "호실", "Room", "Rm"],
         "guest":     ["투숙객명", "투숙객", "고객명", "성명", "Guest", "Guest Name"],
@@ -85,7 +85,7 @@
       "kind_labels": {"Extra-Charge": "EXTRA CHARGE", "1회용품": "EXTRA CHARGE"},
       "_표준": "11/01 수작업 일보를 표준으로 (사용자 지시 2026-11-02): 추가 매출 줄은 이름 그대로 + 거래처 칸에 매출구분",
       "extra_kind_in_company": true,
-      "_줄높이": "줄 높이 34 고정 (사용자 지시 2026-11-10, 이전 11/01 표준 33.95) — 2장에 맞추려고 줄이지 않음 (사용자 지시 2026-11-02: 줄 간격이 같아야 인쇄하기 편함)",
+      "_줄높이": "제목 57 · 줄 높이 39 고정 (사용자 지시 2026-11-10, 인쇄 샘플 비교 후 결정. 이전 34·33.95) — 2장에 맞추려고 줄이지 않음 (사용자 지시 2026-11-02: 줄 간격이 같아야 인쇄하기 편함)",
       "fit_pages": null,
       "prepost_by_payment": {"카드": "카.선", "CASH": "현.선", "현금": "현.선", "대외후불": "온라인결제"},
       "prepost_default": "후",
