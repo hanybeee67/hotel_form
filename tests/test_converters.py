@@ -422,17 +422,15 @@ def test_nights(arr, dep, n):
 
 
 @pytest.mark.parametrize("kind", ["income", "card", "credit", "breakfast"])
-def test_print_area_columns_only(cfg, tmp_path, monkeypatch, kind):
-    """인쇄 범위는 열만 지정 ($A:$I): 근무자가 표 아래에 적은 줄(예: '11월 14일 돌잔치 …')도 인쇄되게 (사용자 보고 2026-11-14)"""
-    import zipfile, re
+def test_no_print_area(cfg, tmp_path, monkeypatch, kind):
+    """인쇄 범위를 정하지 않는다 → 글자가 입력된 모든 범위가 인쇄됨 (사용자 지시 2026-11-14: 표 아래 '돌잔치 …' 메모 줄이 잘렸음)"""
+    import zipfile
     monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
     data = {"income": INCOME, "card": CARD, "credit": CREDIT, "breakfast": BREAKFAST}[kind]
     res = cv.convert_file(kind, _xlsx(tmp_path / f"{kind}.xlsx", data), str(tmp_path / "out"), BDATE, cfg)
     xml = zipfile.ZipFile(res["output"]).read("xl/workbook.xml").decode()
-    area = re.search(r'name="_xlnm.Print_Area"[^>]*>([^<]*)<', xml).group(1)
-    assert re.fullmatch(r"'?[^!]+'?!\$A:\$[A-Z]", area), area
-    if kind == "card":
-        assert area.endswith("$G")  # Acct# 참고 열(H)은 인쇄하지 않음
+    assert "_xlnm.Print_Area" not in xml
+    assert "_xlnm.Print_Titles" in xml  # 쪽마다 제목·머리글 반복은 그대로
 
 
 def test_names_count_western_comma():
