@@ -422,15 +422,18 @@ def test_nights(arr, dep, n):
 
 
 @pytest.mark.parametrize("kind", ["income", "card", "credit", "breakfast"])
-def test_no_print_area(cfg, tmp_path, monkeypatch, kind):
-    """인쇄 범위를 정하지 않는다 → 글자가 입력된 모든 범위가 인쇄됨 (사용자 지시 2026-11-14: 표 아래 '돌잔치 …' 메모 줄이 잘렸음)"""
-    import zipfile
+def test_print_area_is_table_only(cfg, tmp_path, monkeypatch, kind):
+    """인쇄 범위 = 표 안의 내용만 (제목 ~ 표 마지막 줄, 표 크기에 맞춰). 표 밖 메모·참고 열은 인쇄 안 함 (사용자 지시 2026-11-14)"""
     monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
     data = {"income": INCOME, "card": CARD, "credit": CREDIT, "breakfast": BREAKFAST}[kind]
     res = cv.convert_file(kind, _xlsx(tmp_path / f"{kind}.xlsx", data), str(tmp_path / "out"), BDATE, cfg)
-    xml = zipfile.ZipFile(res["output"]).read("xl/workbook.xml").decode()
-    assert "_xlnm.Print_Area" not in xml
-    assert "_xlnm.Print_Titles" in xml  # 쪽마다 제목·머리글 반복은 그대로
+    ws = load_workbook(res["output"]).active
+    area = str(ws.print_area).split("!")[-1].replace("$", "")
+    last_col = {"income": "I", "card": "G", "credit": "F", "breakfast": "E"}[kind]
+    # 표의 마지막 줄 = 테두리가 있는 마지막 행
+    last_row = max(r for r in range(1, ws.max_row + 1) if ws.cell(r, 1).border.left.style)
+    assert area == f"A1:{last_col}{last_row}", area
+    assert ws.print_title_rows  # 쪽마다 제목·머리글 반복
 
 
 def test_names_count_western_comma():

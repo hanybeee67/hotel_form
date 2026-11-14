@@ -1067,9 +1067,9 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
             if fr + 1 <= table_end:
                 nb = ws.cell(fr + 1, c).border
                 ws.cell(fr + 1, c).border = Border(left=nb.left, right=nb.right, top=thick, bottom=nb.bottom)
-    # 인쇄 범위를 정하지 않는다 → 엑셀이 글자가 입력된 모든 범위를 인쇄 (사용자 지시 2026-11-14:
-    # "모든 문서의 인쇄 범위를 글자가 입력되어 있는 모든 범위로". 근무자가 표 아래·오른쪽에 적은 메모도 인쇄됨)
-    ws.print_area = None
+    # 인쇄 범위 = 표 안의 내용만 (제목 ~ 표 마지막 줄, 날마다 표 크기에 맞춰). 표 밖 메모 줄·오른쪽 참고 열(Acct#)은 인쇄하지 않음
+    # (사용자 지시 2026-11-14: "메모줄은 인쇄하지 말라. 표 안에 있는 모든 내용만"). 표에 줄을 더하려면 표 안에 '행 삽입' → 범위가 따라 늘어남
+    ws.print_area = f"A1:{get_column_letter(right)}{table_end}"
     _fit_a4(ws, hrow, keep_margins=bool(template) and not fill_pages)
     # 조식명단 외 서류의 행 높이는 어떤 경우에도 양식(샘플) 그대로 (사용자 지시 2026-11-09). 길면 쪽 수가 늘어날 뿐
     if fill_pages:
@@ -2377,7 +2377,7 @@ def breakfast_count(inhouse_path, reserve_path, out_dir, business_date, cfg=None
     else:
         _draw_grid(ws, hrow, hrow, 1, 5)
     _fit_a4(ws, hrow)
-    # 인쇄 범위 없음: 글자가 입력된 모든 범위를 인쇄 (2026-11-14)
+    ws.print_area = f"A1:E{max(r, hrow)}"  # 표 안만 인쇄 (2026-11-14)
 
     fname = re.sub(r'[\\/:*?"<>|]', "-", conv["file_pattern"].format(date=bf_s, m=bf_date.month, d=bf_date.day))
     out_dir, moved = writable_out_dir(out_dir)
