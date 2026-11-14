@@ -101,7 +101,7 @@ def test_income(cfg, tmp_path):
     assert [v[2][6], v[3][6]] == [1, 1]  # 숙박수 = 출발일 - 도착일 (자동)
     assert not ws["G3"].fill.fgColor.rgb.endswith("FFF2B3")
     assert not ws.page_setup.blackAndWhite  # 수입일보는 컬러 인쇄 (2026-11-03, 회색 줄이 종이에 나오게)
-    assert ws["B3"].font.name == "굴림" and ws["B3"].font.sz == 18 and ws["A1"].font.sz == 26  # 11/01 표준
+    assert ws["B3"].font.name == "굴림" and ws["B3"].font.sz == 20 and ws["A1"].font.sz == 26  # 글자 20 (2026-11-14)
     assert os.path.basename(res["output"]) == "수입일보 2026-10-22.xlsx"
     # 수입일보는 매출이 잡힌 줄은 객실 범위 밖(1030 외부 조식 등)도 모두 집계 (2026-10-28)
     assert v[4][0] == "1030" and v[4][7] == 50000
@@ -207,9 +207,9 @@ def test_template_keeps_hotel_format(cfg, tmp_path, no_templates):
 
 
 @pytest.mark.parametrize("kind,data,title_size,body_size,font", [
-    ("income", INCOME, 26, 18, "굴림"),  # 11/01 수작업 일보 표준 (2026-11-02)
-    ("card", CARD, 26, 18, "굴림"),  # 11/01 카드승인내역 샘플 (2026-11-02)
-    ("credit", CREDIT, 28, 16, "굴림"),
+    ("income", INCOME, 26, 20, "굴림"),  # 본문 20 (사용자 지시 2026-11-14)
+    ("card", CARD, 26, 20, "굴림"),
+    ("credit", CREDIT, 28, 20, "굴림"),
     ("breakfast", BREAKFAST, 26, 18, "맑은 고딕"),
 ])
 def test_repo_templates(cfg, tmp_path, monkeypatch, kind, data, title_size, body_size, font):
@@ -342,14 +342,14 @@ def test_many_rows_fit_two_a4_pages(cfg, tmp_path, monkeypatch):
     rows = [INCOME[0]] + [["ROOM", f"손님{i}", BDATE, "2026-10-23", "D/T", "회사", f"{300 + (i % 13) + 1 + (i // 13) * 100:04d}",
                            "", 0, 0, "", "", 1, 0, 0, 0, 0, 99000, 0] for i in range(65)]
     ws, _ = _values(cv.convert_file("income", _xlsx(tmp_path / "수입.xlsx", rows), str(tmp_path / "out"), BDATE, cfg)["output"])
-    assert ws.row_dimensions[1].height == 57 and all(ws.row_dimensions[r].height == 39 for r in range(2, 68))
-    assert ws["B3"].font.sz == 18 and ws.page_setup.fitToWidth == 1 and ws.page_setup.fitToHeight == 0
+    assert ws.row_dimensions[1].height == 72.75 and all(ws.row_dimensions[r].height == 45 for r in range(2, 68))
+    assert ws["B3"].font.sz == 20 and ws.page_setup.fitToWidth == 1 and ws.page_setup.fitToHeight == 0
     head = CREDIT[0]
     many = [head] + [["가상호텔", "ROOM", 1, f"{300 + (i % 13) + 1 + (i // 13) * 100:04d}", "대외후불", BDATE, f"손님{i}",
                       BDATE, "2026-10-23", "가상여행", 10000, ""] for i in range(65)]
     ws2, _ = _values(cv.convert_file("credit", _xlsx(tmp_path / "후불.xlsx", many), str(tmp_path / "out"), BDATE, cfg)["output"])
     # 대외후불도 줄이지 않음 (사용자 지시 2026-11-09: 모든 결과물의 행 높이는 샘플 그대로) → 쪽 수만 늘어남
-    assert ws2.page_setup.fitToHeight == 0 and all(ws2.row_dimensions[r].height == 39.95 for r in range(2, 69))
+    assert ws2.page_setup.fitToHeight == 0 and all(ws2.row_dimensions[r].height == 45 for r in range(2, 69))
 
 
 @pytest.mark.parametrize("remark,ok,pax", [
@@ -421,6 +421,20 @@ def test_nights(arr, dep, n):
     assert cv._nights(arr, dep) == n
 
 
+@pytest.mark.parametrize("kind", ["income", "card", "credit", "breakfast"])
+def test_print_area_columns_only(cfg, tmp_path, monkeypatch, kind):
+    """인쇄 범위는 열만 지정 ($A:$I): 근무자가 표 아래에 적은 줄(예: '11월 14일 돌잔치 …')도 인쇄되게 (사용자 보고 2026-11-14)"""
+    import zipfile, re
+    monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
+    data = {"income": INCOME, "card": CARD, "credit": CREDIT, "breakfast": BREAKFAST}[kind]
+    res = cv.convert_file(kind, _xlsx(tmp_path / f"{kind}.xlsx", data), str(tmp_path / "out"), BDATE, cfg)
+    xml = zipfile.ZipFile(res["output"]).read("xl/workbook.xml").decode()
+    area = re.search(r'name="_xlnm.Print_Area"[^>]*>([^<]*)<', xml).group(1)
+    assert re.fullmatch(r"'?[^!]+'?!\$A:\$[A-Z]", area), area
+    if kind == "card":
+        assert area.endswith("$G")  # Acct# 참고 열(H)은 인쇄하지 않음
+
+
 def test_names_count_western_comma():
     """영문 '성, 이름'은 한 사람 (사용자 보고 2026-11-08: 301·411·508이 1명인데 2명으로 잡힘)"""
     assert cv._names_count("Smith, Anna") is None
@@ -482,7 +496,7 @@ def test_other_documents_not_stretched(cfg, tmp_path, monkeypatch):
     monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
     res = cv.convert_file("credit", _xlsx(tmp_path / "c.xlsx", CREDIT), str(tmp_path / "out"), BDATE, cfg)
     ws = load_workbook(res["output"]).active
-    assert ws.row_dimensions[3].height == 39.95
+    assert ws.row_dimensions[3].height == 45  # 행 45 고정 (2026-11-14)
 
 
 @pytest.mark.parametrize("n_rooms", [20, 30, 43, 55, 58, 65])  # 58 이상: 2026-11-10 실제 58객실에서 2쪽이 짧던 문제
@@ -921,13 +935,13 @@ def test_sample_1101_sizes(cfg, tmp_path, monkeypatch):
     monkeypatch.setattr(cv, "app_dir", lambda: ROOT)
     inc = load_workbook(cv.convert_file("income", _xlsx(tmp_path / "i.xlsx", INCOME), str(tmp_path / "o"), BDATE, cfg)["output"]).active
     assert [inc.column_dimensions[c].width for c in "ABCDEFGHI"] == [13.83, 47.66, 31.83, 24.83, 24.83, 20.5, 13.83, 24.83, 24.83]
-    assert inc.row_dimensions[1].height == 57 and inc.row_dimensions[3].height == 39
+    assert inc.row_dimensions[1].height == 72.75 and inc.row_dimensions[3].height == 45  # 2026-11-14
     assert (round(inc.page_margins.left, 3), round(inc.page_margins.top, 3)) == (0.748, 0.394)
     card = load_workbook(cv.convert_file("card", _xlsx(tmp_path / "c.xlsx", CARD), str(tmp_path / "o"), BDATE, cfg)["output"]).active
     assert [card.cell(2, c).value for c in range(1, 8)] == ["객실", "카드번호", "사업자번호", "매입사", "가맹점번호", "승인번호", "승인금액"]
     assert [card.column_dimensions[c].width for c in "ABCDEFG"] == [33.16, 47.16, 28.16, 18.66, 27.16, 23.5, 28.16]
-    assert card.row_dimensions[1].height == 39.95 and card.row_dimensions[3].height == 32.1
-    assert card["A1"].font.sz == 26 and card["B3"].font.sz == 18 and card["A1"].value.startswith("카드승인내역 (")
+    assert card.row_dimensions[1].height == 39.95 and card.row_dimensions[3].height == 45  # 2026-11-14
+    assert card["A1"].font.sz == 26 and card["B3"].font.sz == 20 and card["A1"].value.startswith("카드승인내역 (")
     assert (round(card.page_margins.left, 3), round(card.page_margins.top, 3)) == (0.748, 0.984)
 
 

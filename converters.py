@@ -1067,7 +1067,10 @@ def write_workbook(path, sheet_name, title_text, out_cols, records, sum_fields,
             if fr + 1 <= table_end:
                 nb = ws.cell(fr + 1, c).border
                 ws.cell(fr + 1, c).border = Border(left=nb.left, right=nb.right, top=thick, bottom=nb.bottom)
-    ws.print_area = f"A1:{get_column_letter(right)}{r}"
+    # 인쇄 범위는 열만 정한다 (사용자 2026-11-14: 근무자가 표 아래에 적은 '돌잔치 …' 줄이 인쇄되지 않음 — 행까지 정하면 그 아래가 잘림).
+    # 행은 내용이 있는 곳까지 엑셀이 알아서 인쇄. 오른쪽 참고 열(Acct# 등)은 열 범위 밖이라 인쇄되지 않음
+    ws.print_area = None
+    ws._print_cols = get_column_letter(right)  # _clean_copy가 열만 지정한 인쇄 범위(Print_Area = $A:$I)로 저장
     _fit_a4(ws, hrow, keep_margins=bool(template) and not fill_pages)
     # 조식명단 외 서류의 행 높이는 어떤 경우에도 양식(샘플) 그대로 (사용자 지시 2026-11-09). 길면 쪽 수가 늘어날 뿐
     if fill_pages:
@@ -1181,7 +1184,13 @@ def _clean_copy(ws):
     if ws.auto_filter.ref:
         out.auto_filter.ref = ws.auto_filter.ref
     out.freeze_panes = ws.freeze_panes
-    if ws.print_area:
+    if getattr(ws, "_print_cols", None):
+        # 열만 지정 ('시트'!$A:$I): 근무자가 표 아래에 줄을 더 적어도 인쇄됨 (2026-11-14). openpyxl의 print_area는 행 없는 범위를 받지 않아 이름을 직접 넣음
+        from openpyxl.workbook.defined_name import DefinedName
+        from openpyxl.utils import quote_sheetname
+        out.defined_names["_xlnm.Print_Area"] = DefinedName(
+            "_xlnm.Print_Area", localSheetId=0, attr_text=f"{quote_sheetname(out.title)}!$A:${ws._print_cols}")
+    elif ws.print_area:
         out.print_area = ws.print_area[0] if isinstance(ws.print_area, (list, tuple)) else ws.print_area.split("!")[-1]
     if ws.print_title_rows:
         out.print_title_rows = ws.print_title_rows.replace("$", "")
